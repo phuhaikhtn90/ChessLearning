@@ -6,6 +6,7 @@ const PROGRESS_KEY = "chess_progress";
 const STATS_KEY = "chess_stats";
 const SESSION_KEY = "chess_session";
 const ATTEMPTS_KEY = "chess_attempts";
+const GOAL_KEY = "chess_player_goal";
 
 // ─── UserProgress ─────────────────────────────────────────────────────────────
 
@@ -68,7 +69,11 @@ export function addXP(
 // ─── Daily Session ─────────────────────────────────────────────────────────────
 
 function todayDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export function loadDailySession(userId: string): DailySession {
@@ -117,4 +122,20 @@ export function saveAttempt(attempt: AttemptLog): void {
   if (typeof window !== "undefined") {
     localStorage.setItem(ATTEMPTS_KEY, JSON.stringify(trimmed));
   }
+}
+
+// ─── Player Goal ──────────────────────────────────────────────────────────────
+
+export function loadPlayerGoal(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(GOAL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function savePlayerGoal(goal: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(GOAL_KEY, goal);
 }

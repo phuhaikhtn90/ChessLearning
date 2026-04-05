@@ -1,971 +1,241 @@
-import { OpeningLine } from "@/types";
+import {
+  BookChapter,
+  BookMove,
+  BookVariation,
+  OpeningBook,
+  OpeningLine,
+  OpeningVariation,
+  VariationGroup,
+} from "@/types";
 
-/**
- * Italian Game opening lines (~20 variations).
- * Each line is a sequence of plies from the starting position.
- * validMoves uses SAN notation (chess.js standard).
- */
-export const italianGameLines: OpeningLine[] = [
-  // ──────────────────────────────────────────────────
-  // 1. Italian Game – Main Line (Giuoco Piano)
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_001",
-    name: "Italian Game – Giuoco Piano",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 1,
-    tags: ["opening", "italian", "e4"],
-    trap: false,
-    moves: [
-      {
-        ply: 1,
-        side: "w",
-        validMoves: ["e4"],
-        explain: "Kiểm soát trung tâm bằng tốt e4",
-        tags: ["center_control"],
-      },
-      {
-        ply: 2,
-        side: "b",
-        validMoves: ["e5"],
-        explain: "Đen cũng kiểm soát trung tâm",
-        tags: ["center_control"],
-      },
-      {
-        ply: 3,
-        side: "w",
-        validMoves: ["Nf3"],
-        explain: "Phát triển mã, tấn công tốt e5",
-        tags: ["development"],
-      },
-      {
-        ply: 4,
-        side: "b",
-        validMoves: ["Nc6"],
-        explain: "Bảo vệ tốt e5 bằng mã",
-        tags: ["development"],
-      },
-      {
-        ply: 5,
-        side: "w",
-        validMoves: ["Bc4"],
-        explain: "Tượng nhắm vào f7, ô yếu của đen",
-        tags: ["development", "king_safety"],
-      },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["Bc5"],
-        explain: "Đen phát triển tượng đối xứng",
-        tags: ["development"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["c3"],
-        explain: "Chuẩn bị d4 mở rộng trung tâm",
-        tags: ["center_control", "pawn_structure"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Nf6"],
-        explain: "Phát triển mã, tấn công e4",
-        tags: ["development"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["d4"],
-        explain: "Mở rộng trung tâm",
-        tags: ["center_control"],
-      },
-    ],
-  },
+function toMoveNode(move: BookMove) {
+  return {
+    ply: move.ply,
+    side: move.side,
+    move: move.move,
+    validMoves: [move.move],
+    explain: move.explain,
+    moveEval: move.moveEval,
+    posEval: move.posEval,
+  };
+}
 
-  // ──────────────────────────────────────────────────
-  // 2. Italian Game – Evans Gambit
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_002",
-    name: "Italian Game – Evans Gambit",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "gambit", "aggressive"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen kiểm soát trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ tốt e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["b4"],
-        explain: "Gambit Evans – hy sinh tốt giành tempo",
-        tags: ["gambit", "tempo"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Bxb4"],
-        explain: "Đen nhận gambit",
-        tags: ["gambit"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["c3"],
-        explain: "Tạo áp lực lên tượng đen",
-        tags: ["gambit", "tempo"],
-      },
-    ],
-  },
+function buildOutcomeSummary(moves: BookMove[], fallback: string): string {
+  const explainedMove = [...moves].reverse().find((move) => move.explain);
+  if (explainedMove?.explain) return explainedMove.explain;
 
-  // ──────────────────────────────────────────────────
-  // 3. Italian Game – Two Knights Defense
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_003",
-    name: "Two Knights Defense",
-    opening: "Italian Game",
-    fenStart: "startpos",
+  const finalEval = moves[moves.length - 1]?.posEval;
+  return finalEval ? `Đánh giá sau nhánh này: ${finalEval}.` : fallback;
+}
+
+function normalizeVariation(
+  variation: BookVariation,
+  fallbackDescription: string
+): OpeningVariation {
+  const normalizedSubVariations = (variation.subVariations ?? []).map((subVariation) =>
+    normalizeVariation(
+      {
+        id: `${variation.id}_${subVariation.id}`,
+        name: subVariation.name,
+        moves: [...variation.moves, ...subVariation.moves],
+      },
+      fallbackDescription
+    )
+  );
+
+  return {
+    id: variation.id,
+    name: variation.name,
+    description: fallbackDescription,
+    startingPly: variation.moves[0]?.ply ?? 1,
+    reviewPlies: 0,
+    moves: variation.moves.map(toMoveNode),
+    outcome: {
+      type: "advantage",
+      summary: buildOutcomeSummary(variation.moves, fallbackDescription),
+    },
+    subVariations: normalizedSubVariations,
+  };
+}
+
+function normalizeVariationGroup(group: BookChapter["variationGroups"][number]): VariationGroup {
+  const variations =
+    group.variations?.map((variation) => normalizeVariation(variation, group.intro)) ??
+    (group.moves
+      ? [
+          normalizeVariation(
+            {
+              id: `${group.id}_main`,
+              name: group.title,
+              moves: group.moves,
+            },
+            group.intro
+          ),
+        ]
+      : []);
+
+  return {
+    id: group.id,
+    title: group.title,
+    intro: group.intro,
+    variations,
+  };
+}
+
+function chapterToOpeningLine(book: OpeningBook, chapter: BookChapter, chapterIndex: number): OpeningLine {
+  return {
+    id: chapter.id,
+    name: chapter.name,
+    opening: chapter.opening,
+    fenStart: chapter.fenStart,
+    moves: [],
+    guide: {
+      title: chapter.name,
+      summary: chapter.summary,
+      goals: [
+        "Nhìn đúng hình cờ xuất phát của chương trước khi học từng nhánh phụ.",
+        "Ghi nhớ vì sao các nước đi phụ của Đen bị xem là chậm hoặc thiếu chính xác.",
+        "Chuyển từ ý tưởng trong sách sang phản xạ đi quân trên bàn cờ.",
+      ],
+      watchFor: [
+        "Không cần đi lại phần hình thành Italian cơ bản, vì chương bắt đầu từ fen có sẵn.",
+        "Ưu tiên hiểu ý tưởng trừng phạt ở trung tâm thay vì chỉ học thuộc nước.",
+        "Khi một nhánh có nhiều phân nhánh con, hãy chú ý đúng nước rẽ nhánh đầu tiên.",
+      ],
+    },
+    outcome: {
+      type: "advantage",
+      summary: chapter.summary,
+    },
+    variationGroups: chapter.variationGroups.map(normalizeVariationGroup),
     difficulty: 2,
-    tags: ["opening", "italian", "two_knights"],
+    tags: ["italian_game", "book_based", "chapter_study", `chapter_${chapterIndex + 1}`],
     trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["Nf6"],
-        explain: "Hai mã – phòng thủ tích cực",
-        tags: ["development", "counterattack"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["Ng5"],
-        explain: "Tấn công điểm yếu f7",
-        tags: ["attack", "king_safety"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["d5"],
-        explain: "Đen phản công trung tâm",
-        tags: ["center_control", "counterattack"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["exd5"],
-        explain: "Ăn tốt d5 mở cột e",
-        tags: ["center_control"],
-      },
-    ],
-  },
+    bookCoverage: {
+      isBookAligned: true,
+      priority: 100 - chapterIndex,
+      references: [
+        {
+          bookId: book.id,
+          title: book.title,
+          note: chapter.name,
+        },
+      ],
+      summary: chapter.summary,
+    },
+    bookId: book.id,
+    bookTitle: book.title,
+    chapterNumber: chapterIndex + 1,
+  };
+}
 
-  // ──────────────────────────────────────────────────
-  // 4. Italian Game – Fried Liver Attack (Trap)
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_004",
-    name: "Fried Liver Attack",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 4,
-    tags: ["opening", "italian", "trap", "sacrifice"],
-    trap: true,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Nf6"], explain: "Hai mã" },
-      { ply: 7, side: "w", validMoves: ["Ng5"], explain: "Tấn công f7" },
-      { ply: 8, side: "b", validMoves: ["d5"], explain: "Phản công" },
-      { ply: 9, side: "w", validMoves: ["exd5"], explain: "Ăn tốt" },
-      { ply: 10, side: "b", validMoves: ["Nxd5"], explain: "Đen ăn lại" },
-      {
-        ply: 11,
-        side: "w",
-        validMoves: ["Nxf7"],
-        explain: "Hy sinh mã vào f7 – Fried Liver!",
-        tags: ["sacrifice", "attack", "king_safety"],
-        isTrapOpportunity: true,
-      },
-      {
-        ply: 12,
-        side: "b",
-        validMoves: ["Kxf7"],
-        explain: "Vua đen buộc phải ăn",
-        tags: ["king_safety"],
-      },
-      {
-        ply: 13,
-        side: "w",
-        validMoves: ["Qf3+"],
-        explain: "Chiếu vua, tiếp tục tấn công",
-        tags: ["attack", "king_safety"],
-      },
-    ],
-  },
+export const winningWithTheSlowButVenomousItalian: OpeningBook = {
+  id: "winning-with-the-slow-but-venomous-italian",
+  slug: "winning-with-the-slow-but-venomous-italian-9789056916749_compress",
+  title: "Winning with the Slow but Venomous Italian",
+  description: "Nội dung được tổ chức theo sách, mỗi chapter là một bài học lớn với nhiều nhánh con bên trong.",
+  chapters: [
+    {
+      id: "wwsi_ch01_full",
+      name: "Chương 1: Các biến phụ ở nước thứ 3",
+      opening: "Italian Game",
+      fenStart: "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+      summary:
+        "Chương này xem xét các nước đi ngoài 3...Bc5 và 3...Nf6. Các biến 3...f5?!, 3...Nd4?! và 3...h6?! được coi là yếu vì Đen chậm phát triển quân. Trắng sẽ giành ưu thế bằng các nước đi trung tâm mạnh mẽ.",
+      variationGroups: [
+        {
+          id: "ch1_f5_rousseau",
+          title: "Nhánh 3...f5?! (Rousseau Gambit)",
+          intro: "Nước đi cực kỳ hung hăng này làm yếu cánh Vua. Trắng có ưu thế lớn với 4.d4 hoặc 4.d3.",
+          variations: [
+            {
+              id: "ch1_f5_A1",
+              name: "Biến A1: Phản công trung tâm với 4.d4",
+              moves: [
+                { ply: 6, side: "b", move: "f5", moveEval: "?!", explain: "Đen tấn công sớm nhưng làm yếu cấu trúc bảo vệ Vua." },
+                { ply: 7, side: "w", move: "d4", moveEval: "!", explain: "Trắng lập tức đánh vào trung tâm để khai thác sự hở sườn của Đen." },
+              ],
+              subVariations: [
+                {
+                  id: "A11",
+                  name: "Nhánh A11: 4...fxe4",
+                  moves: [
+                    { ply: 8, side: "b", move: "fxe4" },
+                    { ply: 9, side: "w", move: "Nxe5" },
+                    { ply: 10, side: "b", move: "d5" },
+                    { ply: 11, side: "w", move: "Bb5" },
+                    { ply: 12, side: "b", move: "Qd6" },
+                    { ply: 13, side: "w", move: "c4", moveEval: "!", posEval: "+-", explain: "Trắng phá hủy cấu trúc tốt của Đen. Thế cờ Trắng thắng rõ sau d4 (±)." },
+                  ],
+                },
+                {
+                  id: "A12",
+                  name: "Nhánh A12: 4...exd4",
+                  moves: [
+                    { ply: 8, side: "b", move: "exd4" },
+                    { ply: 9, side: "w", move: "e5", moveEval: "!", posEval: "+-", explain: "Nước đi rất thuyết phục, Vua Đen sẽ bị tấn công mạnh mẽ." },
+                    { ply: 10, side: "b", move: "d6" },
+                    { ply: 11, side: "w", move: "exd6" },
+                    { ply: 12, side: "b", move: "Bxd6" },
+                    { ply: 13, side: "w", move: "O-O", posEval: "+-", explain: "Trắng hoàn tất phát triển và sẵn sàng tấn công trực diện." },
+                  ],
+                },
+              ],
+            },
+            {
+              id: "ch1_f5_A2",
+              name: "Biến A2: Củng cố chắc chắn với 4.d3",
+              moves: [
+                { ply: 7, side: "w", move: "d3", explain: "Cách tiếp cận an toàn hơn để duy trì ưu thế ổn định." },
+                { ply: 8, side: "b", move: "Nf6" },
+                { ply: 9, side: "w", move: "O-O" },
+                { ply: 10, side: "b", move: "d6" },
+                { ply: 11, side: "w", move: "Ng5", moveEval: "!", posEval: "+-", explain: "Trắng tấn công vào ô f7, Đen gặp khó khăn lớn để phòng thủ." },
+              ],
+            },
+          ],
+        },
+        {
+          id: "ch1_nd4_sideline",
+          title: "Nhánh 3...Nd4?!",
+          intro: "Nước đi vi phạm nguyên tắc không di chuyển một quân quá nhiều lần trong khai cuộc.",
+          moves: [
+            { ply: 6, side: "b", move: "Nd4", moveEval: "?!", explain: "Đen muốn bẫy Trắng nhưng thực tế là đánh mất nhịp phát triển." },
+            { ply: 7, side: "w", move: "Nxd4", moveEval: "!", explain: "Trắng đơn giản là đổi quân để giữ quyền kiểm soát trung tâm." },
+            { ply: 8, side: "b", move: "exd4" },
+            { ply: 9, side: "w", move: "O-O", posEval: "+=", explain: "Trắng dẫn trước về phát triển và có thế trận tốt hơn (+=)." },
+          ],
+        },
+        {
+          id: "ch1_h6_sideline",
+          title: "Nhánh 3...h6?!",
+          intro: "Nước đi phòng thủ thụ động thường thấy ở cấp độ nghiệp dư, làm phí thời gian.",
+          moves: [
+            { ply: 6, side: "b", move: "h6", moveEval: "?!", explain: "Đen ngăn chặn Ng5 nhưng lại chậm phát triển quân." },
+            { ply: 7, side: "w", move: "O-O" },
+            { ply: 8, side: "b", move: "Nf6" },
+            { ply: 9, side: "w", move: "d4", moveEval: "!", posEval: "+=", explain: "Trắng lập tức mở trung tâm để trừng phạt sự chậm trễ của Đen." },
+          ],
+        },
+        {
+          id: "ch1_g6_sideline",
+          title: "Nhánh 3...g6",
+          intro: "Một nỗ lực tránh các biến lý thuyết sâu nhưng kế hoạch Fianchetto này hơi chậm.",
+          moves: [
+            { ply: 6, side: "b", move: "g6", explain: "Đen muốn đưa tượng lên g7." },
+            { ply: 7, side: "w", move: "d4", moveEval: "!", explain: "Trắng phản ứng mạnh mẽ ở trung tâm." },
+            { ply: 8, side: "b", move: "exd4" },
+            { ply: 9, side: "w", move: "c3", moveEval: "!", posEval: "+=", explain: "Trắng sẵn sàng hy sinh một tốt để giành quyền chủ động và không gian." },
+          ],
+        },
+      ],
+    },
+  ],
+};
 
-  // ──────────────────────────────────────────────────
-  // 5. Italian Game – Giuoco Pianissimo
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_005",
-    name: "Giuoco Pianissimo",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 2,
-    tags: ["opening", "italian", "quiet", "positional"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen kiểm soát trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["d3"],
-        explain: "Pianissimo – chơi chậm, vững chắc",
-        tags: ["positional", "pawn_structure"],
-      },
-      { ply: 8, side: "b", validMoves: ["Nf6"], explain: "Phát triển mã đen" },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["Nc3"],
-        explain: "Phát triển mã hậu",
-        tags: ["development"],
-      },
-    ],
-  },
+export const italianGameChapters: OpeningLine[] =
+  winningWithTheSlowButVenomousItalian.chapters.map((chapter, index) =>
+    chapterToOpeningLine(winningWithTheSlowButVenomousItalian, chapter, index)
+  );
 
-  // ──────────────────────────────────────────────────
-  // 6. Italian Game – Hungarian Defense
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_006",
-    name: "Hungarian Defense",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 2,
-    tags: ["opening", "italian", "defense"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["Be7"],
-        explain: "Phòng thủ Hungary – thụ động nhưng vững",
-        tags: ["defense", "king_safety"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["d4"],
-        explain: "Tấn công trung tâm khi đen thụ động",
-        tags: ["center_control", "tempo"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["d6"],
-        explain: "Đen giữ vững vị trí",
-        tags: ["defense"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 7. Italian Game – Scotch Gambit
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_007",
-    name: "Scotch Gambit",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "gambit"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      {
-        ply: 5,
-        side: "w",
-        validMoves: ["d4"],
-        explain: "Scotch – mở trung tâm ngay",
-        tags: ["center_control", "gambit"],
-      },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["exd4"],
-        explain: "Đen ăn tốt",
-        tags: ["center_control"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["Bc4"],
-        explain: "Scotch Gambit – tượng Italy sau d4",
-        tags: ["development", "gambit"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Nf6"],
-        explain: "Phát triển mã tấn công e4",
-        tags: ["development", "counterattack"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 8. Italian Game – Jerome Gambit (Trap)
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_008",
-    name: "Jerome Gambit",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 4,
-    tags: ["opening", "italian", "gambit", "trap"],
-    trap: true,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["Bxf7+"],
-        explain: "Jerome Gambit – hy sinh tượng vào f7!",
-        tags: ["sacrifice", "trap", "king_safety"],
-        isTrapOpportunity: true,
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Kxf7"],
-        explain: "Vua đen nhận hy sinh",
-        tags: ["king_safety"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["Nxe5+"],
-        explain: "Mã chiếu vua, ăn thêm quân",
-        tags: ["attack"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 9. Italian Game – Anti-Italian (d6 system)
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_009",
-    name: "Anti-Italian – d6 System",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 2,
-    tags: ["opening", "italian", "defense", "solid"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["d6"],
-        explain: "Hệ thống d6 – chơi chắc chắn",
-        tags: ["defense", "pawn_structure"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["Nc3"],
-        explain: "Phát triển mã hậu",
-        tags: ["development"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Be7"],
-        explain: "Chuẩn bị nhập thành",
-        tags: ["king_safety"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["O-O"],
-        explain: "Nhập thành an toàn",
-        tags: ["king_safety"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 10. Italian Game – Giuoco Piano – Greco Attack
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_010",
-    name: "Giuoco Piano – Greco Attack",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "attack"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      { ply: 7, side: "w", validMoves: ["c3"], explain: "Chuẩn bị d4" },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Nf6"],
-        explain: "Tấn công e4",
-        tags: ["counterattack"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["d4"],
-        explain: "Greco Attack – mở trung tâm mạnh",
-        tags: ["center_control", "attack"],
-      },
-      {
-        ply: 10,
-        side: "b",
-        validMoves: ["exd4"],
-        explain: "Đen ăn tốt",
-        tags: ["center_control"],
-      },
-      {
-        ply: 11,
-        side: "w",
-        validMoves: ["e5"],
-        explain: "Đẩy e5 tạo áp lực lên mã f6",
-        tags: ["attack", "tempo"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 11. Italian Game – Traps: Noah's Ark Trap
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_011",
-    name: "Noah's Ark Trap",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "trap"],
-    trap: true,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      { ply: 7, side: "w", validMoves: ["c3"], explain: "Chuẩn bị d4" },
-      { ply: 8, side: "b", validMoves: ["Nf6"], explain: "Tấn công e4" },
-      { ply: 9, side: "w", validMoves: ["d4"], explain: "Mở trung tâm" },
-      { ply: 10, side: "b", validMoves: ["exd4"], explain: "Đen ăn tốt" },
-      { ply: 11, side: "w", validMoves: ["cxd4"], explain: "Trắng lấy lại" },
-      {
-        ply: 12,
-        side: "b",
-        validMoves: ["Bb4+"],
-        explain: "Chiếu tượng – đặt bẫy!",
-        tags: ["trap", "tempo"],
-        isTrapOpportunity: true,
-      },
-      {
-        ply: 13,
-        side: "w",
-        validMoves: ["Bd2"],
-        explain: "Trắng phải che chiếu",
-        tags: ["defense"],
-      },
-      {
-        ply: 14,
-        side: "b",
-        validMoves: ["Bxd2+"],
-        explain: "Đen ăn tượng",
-        tags: ["tactic"],
-      },
-      {
-        ply: 15,
-        side: "w",
-        validMoves: ["Nbxd2"],
-        explain: "Trắng lấy lại bằng mã",
-        tags: ["defense"],
-      },
-      {
-        ply: 16,
-        side: "b",
-        validMoves: ["d5"],
-        explain: "Đen thắng tốt trung tâm!",
-        tags: ["center_control", "tactic"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 12. Italian Game – Rousseau Gambit
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_012",
-    name: "Rousseau Gambit",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "gambit"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["f5"],
-        explain: "Rousseau Gambit – đen tấn công táo bạo",
-        tags: ["gambit", "attack", "aggressive"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["d4"],
-        explain: "Trắng phản công trung tâm tốt nhất",
-        tags: ["center_control", "counterattack"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["fxe4"],
-        explain: "Đen ăn tốt e4",
-        tags: ["gambit"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["Nxe5"],
-        explain: "Trắng ăn lại e5",
-        tags: ["tactic"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 13. Italian Game – Four Knights
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_013",
-    name: "Four Knights – Italian Variation",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 2,
-    tags: ["opening", "italian", "four_knights"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Nc3"], explain: "Phát triển mã hậu" },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["Nf6"],
-        explain: "Bốn mã – đối xứng hoàn toàn",
-        tags: ["development", "symmetric"],
-      },
-      { ply: 7, side: "w", validMoves: ["Bc4"], explain: "Vào hệ Italy" },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Bc5"],
-        explain: "Đen đối xứng",
-        tags: ["development"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["O-O"],
-        explain: "Nhập thành an toàn",
-        tags: ["king_safety"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 14. Italian Game – Fishing Pole Trap
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_014",
-    name: "Fishing Pole Trap",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 4,
-    tags: ["opening", "italian", "trap", "sacrifice"],
-    trap: true,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Nf6"], explain: "Hai mã" },
-      { ply: 7, side: "w", validMoves: ["Ng5"], explain: "Tấn công f7" },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["h6"],
-        explain: "Fishing Pole – đặt bẫy cho mã trắng!",
-        tags: ["trap", "tempo"],
-        isTrapOpportunity: true,
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["Nxf7"],
-        explain: "Trắng mắc bẫy – ăn f7?",
-        tags: ["trap"],
-      },
-      {
-        ply: 10,
-        side: "b",
-        validMoves: ["Ng4"],
-        explain: "Đen tấn công vua trắng!",
-        tags: ["attack", "king_safety"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 15. Italian Game – Canal Trap
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_015",
-    name: "Canal Trap",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "trap"],
-    trap: true,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      { ply: 7, side: "w", validMoves: ["O-O"], explain: "Nhập thành" },
-      { ply: 8, side: "b", validMoves: ["Nf6"], explain: "Phát triển mã" },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["d4"],
-        explain: "Mở trung tâm",
-        tags: ["center_control"],
-      },
-      {
-        ply: 10,
-        side: "b",
-        validMoves: ["Nxe4"],
-        explain: "Đen ăn tốt e4 – có vẻ tốt nhưng nguy hiểm",
-        tags: ["tactic", "trap"],
-        isTrapOpportunity: true,
-      },
-      {
-        ply: 11,
-        side: "w",
-        validMoves: ["Re1"],
-        explain: "Xe tấn công mã e4!",
-        tags: ["attack", "pin"],
-      },
-      {
-        ply: 12,
-        side: "b",
-        validMoves: ["d5"],
-        explain: "Đen cố thoát",
-        tags: ["defense"],
-      },
-      {
-        ply: 13,
-        side: "w",
-        validMoves: ["Bxd5"],
-        explain: "Trắng thắng quân!",
-        tags: ["tactic", "winning"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 16. Italian Game – Knight Attack on f7 (quick trap)
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_016",
-    name: "Early f7 Attack",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 2,
-    tags: ["opening", "italian", "attack", "beginners"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      {
-        ply: 6,
-        side: "b",
-        validMoves: ["Nd4"],
-        explain: "Đen chơi mã ra d4 – sai lầm phổ biến",
-        tags: ["mistake", "hanging_piece"],
-      },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["Nxe5"],
-        explain: "Trắng ăn tốt e5 được tặng",
-        tags: ["tactic", "winning"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Qg5"],
-        explain: "Đen tấn công mã và g2",
-        tags: ["attack"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["Nxf7"],
-        explain: "Mã nhảy vào f7 tấn công xe và hậu!",
-        tags: ["fork", "tactic"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 17. Italian Game – Ruy Lopez comparison (similar start)
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_017",
-    name: "Italian vs Ruy Lopez – Key Difference",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 1,
-    tags: ["opening", "italian", "conceptual"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      {
-        ply: 5,
-        side: "w",
-        validMoves: ["Bc4"],
-        explain: "Italian: tượng nhắm f7. Khác Ruy Lopez (Bb5) – áp lực gián tiếp",
-        tags: ["development", "conceptual"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 18. Italian Game – Morphy's Defense vs Italian
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_018",
-    name: "Italian – Morphy Defense Variation",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 2,
-    tags: ["opening", "italian", "morphy"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["a6"], explain: "Ngăn mã nhảy b5" },
-      {
-        ply: 7,
-        side: "w",
-        validMoves: ["Nc3"],
-        explain: "Phát triển mã hậu",
-        tags: ["development"],
-      },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["Nf6"],
-        explain: "Phát triển mã",
-        tags: ["development"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 19. Italian Game – Castling Trap
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_019",
-    name: "Italian – Early Castling Trap",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "trap", "king_safety"],
-    trap: true,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      { ply: 7, side: "w", validMoves: ["O-O"], explain: "Nhập thành cánh vua" },
-      {
-        ply: 8,
-        side: "b",
-        validMoves: ["O-O"],
-        explain: "Đen cũng nhập thành",
-        tags: ["king_safety"],
-      },
-      {
-        ply: 9,
-        side: "w",
-        validMoves: ["d3"],
-        explain: "Củng cố trung tâm",
-        tags: ["pawn_structure"],
-      },
-      {
-        ply: 10,
-        side: "b",
-        validMoves: ["d6"],
-        explain: "Đen giữ vững",
-        tags: ["defense"],
-      },
-      {
-        ply: 11,
-        side: "w",
-        validMoves: ["Bg5"],
-        explain: "Ghim mã c6 – đặt bẫy!",
-        tags: ["pin", "trap"],
-        isTrapOpportunity: true,
-      },
-      {
-        ply: 12,
-        side: "b",
-        validMoves: ["h6"],
-        explain: "Đen đẩy tượng đi",
-        tags: ["tempo"],
-      },
-      {
-        ply: 13,
-        side: "w",
-        validMoves: ["Bh4"],
-        explain: "Tượng rút về h4 – tiếp tục ghim",
-        tags: ["pin"],
-      },
-    ],
-  },
-
-  // ──────────────────────────────────────────────────
-  // 20. Italian Game – Endgame Transition
-  // ──────────────────────────────────────────────────
-  {
-    id: "line_italian_020",
-    name: "Italian – Queenside Expansion",
-    opening: "Italian Game",
-    fenStart: "startpos",
-    difficulty: 3,
-    tags: ["opening", "italian", "positional", "queenside"],
-    trap: false,
-    moves: [
-      { ply: 1, side: "w", validMoves: ["e4"], explain: "Kiểm soát trung tâm" },
-      { ply: 2, side: "b", validMoves: ["e5"], explain: "Đen chiếm trung tâm" },
-      { ply: 3, side: "w", validMoves: ["Nf3"], explain: "Phát triển mã" },
-      { ply: 4, side: "b", validMoves: ["Nc6"], explain: "Bảo vệ e5" },
-      { ply: 5, side: "w", validMoves: ["Bc4"], explain: "Tượng Italy" },
-      { ply: 6, side: "b", validMoves: ["Bc5"], explain: "Đen phát triển tượng" },
-      { ply: 7, side: "w", validMoves: ["c3"], explain: "Chuẩn bị d4" },
-      { ply: 8, side: "b", validMoves: ["Bb6"], explain: "Đen rút tượng tránh d4" },
-      { ply: 9, side: "w", validMoves: ["d4"], explain: "Mở trung tâm" },
-      {
-        ply: 10,
-        side: "b",
-        validMoves: ["d6"],
-        explain: "Đen giữ tốt e5",
-        tags: ["defense", "pawn_structure"],
-      },
-      {
-        ply: 11,
-        side: "w",
-        validMoves: ["O-O"],
-        explain: "Nhập thành trước khi mở trung tâm",
-        tags: ["king_safety"],
-      },
-      {
-        ply: 12,
-        side: "b",
-        validMoves: ["O-O"],
-        explain: "Đen cũng nhập thành",
-        tags: ["king_safety"],
-      },
-      {
-        ply: 13,
-        side: "w",
-        validMoves: ["a4"],
-        explain: "Mở rộng cánh hậu – kế hoạch dài hạn",
-        tags: ["queenside", "positional"],
-      },
-    ],
-  },
-];
-
-export default italianGameLines;
+export default italianGameChapters;

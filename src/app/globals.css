@@ -14,3 +14,33 @@ body {
 * {
   box-sizing: border-box;
 }
+
+.board-spotlight::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 248, 220, 0.02) 0%, rgba(255, 248, 220, 0.02) 34%, rgba(120, 53, 15, 0.12) 100%);
+  animation: boardPulse 2.4s ease-in-out infinite;
+}
+
+.journey-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.08), rgba(15, 23, 42, 0));
+}
+
+@keyframes boardPulse {
+  0% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.72;
+  }
+}

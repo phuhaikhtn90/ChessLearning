@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, startTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, startTransition } from "react";
 import dynamic from "next/dynamic";
 import { OpeningLine, UserProgress, UserStats, AttemptLog } from "@/types";
 import italianGameLines from "@/data/openings/italian_game";
@@ -19,18 +19,21 @@ import {
   XP_PERFECT,
 } from "@/lib/progressTracker";
 import { updateProgress } from "@/lib/spacedRepetition";
+import { buildLessonSegments, LessonSegment } from "@/lib/lessonFlow";
 import XPBar from "@/components/XPBar";
 
 // Dynamically import chess board to avoid SSR issues
 const ChessBoardPractice = dynamic(
   () => import("@/components/ChessBoardPractice"),
-  { ssr: false, loading: () => <div className="w-full max-w-[480px] aspect-square bg-gray-200 rounded-2xl animate-pulse" /> }
+  { ssr: false, loading: () => <div className="w-full max-w-[420px] aspect-square bg-gray-200 rounded-2xl animate-pulse" /> }
 );
 
 interface PracticeMove {
   ply: number;
   userMove: string;
   isCorrect: boolean;
+  segmentId?: string;
+  segmentTitle?: string;
 }
 
 export default function PracticePage() {
@@ -38,8 +41,31 @@ export default function PracticePage() {
   const [progressMap, setProgressMap] = useState<Record<string, UserProgress>>({});
   const [stats, setStats] = useState<UserStats>({ totalXP: 0, level: 0, dailyStreak: 0 });
   const [isNew, setIsNew] = useState(false);
-  const [lineKey, setLineKey] = useState(0); // force remount on new line
+  const [lineKey, setLineKey] = useState(0); // force remount on new line / mode change
   const [xpEarned, setXpEarned] = useState<number | null>(null);
+  const [segmentIndex, setSegmentIndex] = useState(0);
+  const [lessonMoves, setLessonMoves] = useState<PracticeMove[]>([]);
+  const [lessonHadMistake, setLessonHadMistake] = useState(false);
+  const [adHocSegment, setAdHocSegment] = useState<LessonSegment | null>(null);
+
+  const lessonSegments = useMemo(
+    () => (currentLine ? buildLessonSegments(currentLine) : []),
+    [currentLine]
+  );
+  const currentSegment = lessonSegments[segmentIndex] ?? null;
+  const activeSegment = adHocSegment ?? currentSegment;
+  const isFinalSegment = lessonSegments.length > 0 && segmentIndex === lessonSegments.length - 1;
+  const isVariationPracticeSegment =
+    activeSegment?.mode === "practice" && activeSegment.segmentType === "variation";
+
+  const resetLessonState = useCallback(() => {
+    setSegmentIndex(0);
+    setLineKey((k) => k + 1);
+    setLessonMoves([]);
+    setLessonHadMistake(false);
+    setXpEarned(null);
+    setAdHocSegment(null);
+  }, []);
 
   // Load data on mount
   useEffect(() => {
@@ -49,42 +75,58 @@ export default function PracticePage() {
       setProgressMap(map);
       setStats(s);
       const now = Math.floor(Date.now() / 1000);
+      const requestedLineId =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("lineId")
+          : null;
+      if (requestedLineId) {
+        const requestedLine = italianGameLines.find((line) => line.id === requestedLineId) ?? null;
+        if (requestedLine) {
+          setCurrentLine(requestedLine);
+          setIsNew(!map[requestedLine.id]);
+          setSegmentIndex(0);
+          return;
+        }
+      }
       const next = selectNextLine(italianGameLines, map, now);
       if (next) {
         setCurrentLine(next.line);
         setIsNew(next.isNew);
+        setSegmentIndex(0);
       }
     });
   }, []);
 
-  const handleComplete = useCallback(
-    (moves: PracticeMove[], perfect: boolean) => {
+  const handleTutorialComplete = useCallback(() => {
+    setAdHocSegment(null);
+    setSegmentIndex((index) => index + 1);
+    setLineKey((k) => k + 1);
+  }, []);
+
+  const persistLessonResult = useCallback(
+    (moves: PracticeMove[], hadMistakes: boolean, perfect: boolean) => {
       if (!currentLine) return;
 
-      const hasMistakes = moves.some((m) => !m.isCorrect);
       const now = Math.floor(Date.now() / 1000);
       const existingProgress = progressMap[currentLine.id] ?? null;
 
-      // Update progress
       const newProgress = updateProgress(
         existingProgress,
         currentLine.id,
         "guest",
-        !hasMistakes,
+        !hadMistakes,
         now
       );
       saveLineProgress(newProgress);
       const newMap = { ...progressMap, [currentLine.id]: newProgress };
       setProgressMap(newMap);
 
-      // Update XP
-      const xp = perfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+      const xp = perfect ? XP_PERFECT : hadMistakes ? XP_MISTAKE : XP_CORRECT;
       setXpEarned(xp);
-      const newStats = addXP(stats, perfect, hasMistakes);
+      const newStats = addXP(stats, perfect, hadMistakes);
       saveUserStats(newStats);
       setStats(newStats);
 
-      // Save attempt log
       const attempt: AttemptLog = {
         userId: "guest",
         lineId: currentLine.id,
@@ -93,34 +135,100 @@ export default function PracticePage() {
           ply: m.ply,
           userMove: m.userMove,
           isCorrect: m.isCorrect,
+          segmentId: m.segmentId,
+          segmentTitle: m.segmentTitle,
         })),
       };
       saveAttempt(attempt);
 
-      // Update daily session
       const session = loadDailySession("guest");
-      const itemType = currentLine.trap
-        ? "trap"
-        : isNew
-        ? "new"
-        : "review";
+      const itemType = currentLine.trap ? "trap" : isNew ? "new" : "review";
       session.items.push({ lineId: currentLine.id, type: itemType });
       saveDailySession(session);
     },
-    [currentLine, progressMap, stats, isNew]
+    [currentLine, isNew, progressMap, stats]
   );
 
-  const handleNextLine = useCallback(() => {
-    setXpEarned(null);
-    const map = loadProgressMap();
-    const now = Math.floor(Date.now() / 1000);
-    const next = selectNextLine(italianGameLines, map, now);
-    if (next) {
-      setCurrentLine(next.line);
-      setIsNew(next.isNew);
-      setLineKey((k) => k + 1);
+  // ─── Practice completed ───────────────────────────────────────────────────────
+  const handleComplete = useCallback(
+    (moves: PracticeMove[], perfect: boolean) => {
+      if (adHocSegment) {
+        return;
+      }
+
+      const hasMistakes = moves.some((m) => !m.isCorrect);
+      const annotatedMoves = moves.map((move) => ({
+        ...move,
+        segmentId: currentSegment?.id,
+        segmentTitle: currentSegment?.title,
+      }));
+      const allMoves = [...lessonMoves, ...annotatedMoves];
+      const overallHadMistake = lessonHadMistake || hasMistakes;
+
+      setLessonMoves(allMoves);
+      setLessonHadMistake(overallHadMistake);
+
+      if (isFinalSegment) {
+        persistLessonResult(allMoves, overallHadMistake, perfect && !overallHadMistake);
+      }
+    },
+    [
+      adHocSegment,
+      currentSegment?.id,
+      currentSegment?.title,
+      isFinalSegment,
+      lessonHadMistake,
+      lessonMoves,
+      persistLessonResult,
+    ]
+  );
+
+  // ─── Next segment / lesson ────────────────────────────────────────────────────
+  const handleNextSegment = useCallback(() => {
+    if (isFinalSegment) {
+      setXpEarned(null);
+      const map = loadProgressMap();
+      const now = Math.floor(Date.now() / 1000);
+      const next = selectNextLine(italianGameLines, map, now);
+      if (next) {
+        setCurrentLine(next.line);
+        setIsNew(next.isNew);
+      } else {
+        setCurrentLine(null);
+      }
+      resetLessonState();
+      return;
     }
-  }, []);
+
+    setAdHocSegment(null);
+    setSegmentIndex((index) => index + 1);
+    setLineKey((k) => k + 1);
+  }, [isFinalSegment, resetLessonState]);
+
+  const handleNextLine = useCallback(() => {
+    handleNextSegment();
+  }, [handleNextSegment]);
+
+  const handleVariationReplay = useCallback(() => {
+    const replayPool = lessonSegments.filter(
+      (segment, index) =>
+        index <= segmentIndex &&
+        segment.mode === "practice" &&
+        segment.segmentType === "variation"
+    );
+
+    if (replayPool.length === 0) return;
+
+    const randomSegment = replayPool[Math.floor(Math.random() * replayPool.length)];
+    setAdHocSegment({
+      ...randomSegment,
+      id: `${randomSegment.id}__mixed_replay__${Date.now()}`,
+      title: `Ôn hỗn hợp: ${randomSegment.line.name}`,
+      summary: "Hệ thống sẽ chọn ngẫu nhiên một biến thể đã học để bé tự nhớ lại không cần báo trước.",
+      nextActionLabel: "Tập luyện lại",
+    });
+    setLineKey((key) => key + 1);
+  }, [lessonSegments, segmentIndex]);
 
   if (!currentLine) {
     return (
@@ -134,7 +242,7 @@ export default function PracticePage() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Header */}
+      {/* ── Header ── */}
       <div>
         <div className="flex items-center gap-2 mb-1">
           {currentLine.trap && (
@@ -147,53 +255,89 @@ export default function PracticePage() {
               🆕 Bài mới
             </span>
           )}
-          <span className="text-xs text-gray-400">
-            Độ khó {currentLine.difficulty}/4
-          </span>
+          <span className="text-xs text-gray-400">Độ khó {currentLine.difficulty}/4</span>
         </div>
         <h1 className="text-xl font-bold text-gray-900">{currentLine.name}</h1>
         <p className="text-sm text-gray-500">{currentLine.opening}</p>
       </div>
 
-      {/* XP earned notification */}
-      {xpEarned !== null && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center justify-between">
-          <span className="text-amber-700 text-sm font-medium">
-            +{xpEarned} XP kiếm được!
-          </span>
-          <button
-            onClick={handleNextLine}
-            className="bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-lg px-4 py-1.5 transition-colors"
-          >
-            Bài tiếp →
-          </button>
+      {/* ── Practice phase label ── */}
+      {activeSegment?.mode === "practice" && (
+        <div className="rounded-xl bg-sky-50 border border-sky-200 px-4 py-3 flex items-center gap-3">
+          <span className="text-2xl">🎯</span>
+          <div>
+            <p className="text-sm font-semibold text-sky-800">
+              {activeSegment.shortLabel === "Đánh lại"
+                ? "Tự đánh lại để ghi nhớ"
+                : `Tự đánh lại ${activeSegment.title}`}
+            </p>
+            <p className="text-xs text-sky-700 mt-0.5">
+              {activeSegment.summary ?? activeSegment.description}
+            </p>
+          </div>
         </div>
       )}
 
-      {/* Chess board */}
-      <ChessBoardPractice
-        key={lineKey}
-        line={currentLine}
-        onComplete={handleComplete}
-        correctStreak={progressMap[currentLine.id]?.correctStreak ?? 0}
-      />
+      {/* ── XP earned notification ── */}
+      {xpEarned !== null && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center justify-between">
+          <span className="text-amber-700 text-sm font-medium">+{xpEarned} XP kiếm được!</span>
+          {isFinalSegment && (
+            <button
+              onClick={handleNextLine}
+              className="bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-lg px-4 py-1.5 transition-colors"
+            >
+              Bài tiếp →
+            </button>
+          )}
+        </div>
+      )}
 
-      {/* XP bar at bottom */}
+      {/* ── Chess board ── */}
+      {activeSegment && (
+        <ChessBoardPractice
+          key={lineKey}
+          line={activeSegment.line}
+          onComplete={handleComplete}
+          onNextLine={handleNextLine}
+          correctStreak={progressMap[currentLine.id]?.correctStreak ?? 0}
+          mode={activeSegment.mode}
+          onTutorialComplete={handleTutorialComplete}
+          nextActionLabel={activeSegment.nextActionLabel}
+          onReplayLine={isVariationPracticeSegment ? handleVariationReplay : undefined}
+          replayActionLabel={isVariationPracticeSegment ? "Tập luyện lại" : undefined}
+          secondaryActionLabel={
+            isVariationPracticeSegment
+              ? isFinalSegment
+                ? "Hoàn thành bài học"
+                : "Biến thể tiếp theo"
+              : undefined
+          }
+        />
+      )}
+
+      {/* ── XP bar ── */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <XPBar stats={stats} />
       </div>
 
-      {/* Line info */}
+      {activeSegment?.reminder && (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-violet-700 tracking-wide mb-2">
+            Nhắc lại trước khi đi
+          </h3>
+          <p className="text-sm text-violet-900 leading-relaxed">{activeSegment.reminder}</p>
+        </div>
+      )}
+
+      {/* ── Line info ── */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <h3 className="text-xs font-semibold uppercase text-gray-500 tracking-wide mb-2">
           Thông tin khai cuộc
         </h3>
         <div className="flex flex-wrap gap-1">
           {currentLine.tags.map((tag) => (
-            <span
-              key={tag}
-              className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full"
-            >
+            <span key={tag} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
               {tag}
             </span>
           ))}
@@ -221,6 +365,7 @@ export default function PracticePage() {
           </div>
         )}
       </div>
+
     </div>
   );
 }

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { AttemptLog, UserProgress } from "@/types";
 import { updateProgress } from "@/lib/spacedRepetition";
 
+const XP_CORRECT = 10;
+const XP_MISTAKE = 2;
+const XP_PERFECT = 20;
+
 /**
  * POST /api/attempt
  * Body: { lineId, userId, moves, existingProgress? }
@@ -32,6 +36,7 @@ export async function POST(req: NextRequest) {
 
   const hasMistakes = moves.some((m) => !m.isCorrect);
   const wasCorrect = !hasMistakes;
+  const wasPerfect = wasCorrect && moves.length > 0;
 
   const now = Math.floor(Date.now() / 1000);
   const progress = updateProgress(
@@ -42,11 +47,7 @@ export async function POST(req: NextRequest) {
     now
   );
 
-  const xpEarned = wasCorrect
-    ? moves.length === 0
-      ? 20
-      : 10
-    : 2;
+  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
 
   const attempt: AttemptLog = {
     userId,
