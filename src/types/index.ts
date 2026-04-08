@@ -40,8 +40,6 @@ export interface VariationGroup {
 export interface OpeningGuideData {
   title: string;
   summary: string;
-  goals: string[];
-  watchFor: string[];
 }
 
 export interface BookReference {
@@ -109,6 +107,8 @@ export interface OpeningLine {
   name: string;
   opening: string;
   fenStart: string;
+  preferredLearnerSide?: "w" | "b";
+  bookContent?: BookContentNode[];
   moves: MoveNode[];
   nodes?: Record<string, MoveNode>;
   guide?: OpeningGuideData;
@@ -135,6 +135,38 @@ export interface BookMove {
   posEval?: string;
   explain?: string;
 }
+
+export interface BookFlowTextNode {
+  type: "text";
+  content: string;
+}
+
+export interface BookFlowMoveNode {
+  type: "move";
+  notation: string;
+  side: "w" | "b";
+  moveEval?: string;
+  posEval?: string;
+}
+
+export interface BookFlowVariationNode {
+  type: "variation";
+  id: string;
+  title: string;
+  flow: BookContentNode[];
+}
+
+export interface BookFlowVariationGroupNode {
+  type: "variation_group";
+  title: string;
+  flow: BookContentNode[];
+}
+
+export type BookContentNode =
+  | BookFlowTextNode
+  | BookFlowMoveNode
+  | BookFlowVariationNode
+  | BookFlowVariationGroupNode;
 
 export interface BookSubVariation {
   id: string;
@@ -163,7 +195,7 @@ export interface BookChapter {
   opening: string;
   fenStart: string;
   summary: string;
-  variationGroups: BookVariationGroup[];
+  content: BookContentNode[];
 }
 
 export interface OpeningBook {

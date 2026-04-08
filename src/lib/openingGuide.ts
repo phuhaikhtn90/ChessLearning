@@ -5,15 +5,6 @@ function buildFallbackGuide(line: OpeningLine): OpeningGuideData {
     title: `${line.name} là gì?`,
     summary:
       "Đây là một line trong Italian Game. Bé nên nhìn hình quân sau vài nước đầu để hiểu kế hoạch chính, rồi mới học thứ tự nước đi.",
-    goals: [
-      "Nhìn ra ý tưởng chính của line",
-      "Nhớ các ô phát triển quan trọng",
-      "Tập kết nối khai cuộc với kế hoạch trung cuộc",
-    ],
-    watchFor: [
-      "Đừng chỉ học thuộc tên khai cuộc",
-      "Nếu quên nước, hãy nhớ mục tiêu của thế cờ trước",
-    ],
   };
 }
 

@@ -21,6 +21,7 @@ import {
 import { updateProgress } from "@/lib/spacedRepetition";
 import { buildLessonSegments, LessonSegment } from "@/lib/lessonFlow";
 import XPBar from "@/components/XPBar";
+import BranchExplorer from "@/components/BranchExplorer";
 
 // Dynamically import chess board to avoid SSR issues
 const ChessBoardPractice = dynamic(
@@ -56,7 +57,8 @@ export default function PracticePage() {
   const activeSegment = adHocSegment ?? currentSegment;
   const isFinalSegment = lessonSegments.length > 0 && segmentIndex === lessonSegments.length - 1;
   const isVariationPracticeSegment =
-    activeSegment?.mode === "practice" && activeSegment.segmentType === "variation";
+    activeSegment?.mode === "practice" &&
+    (activeSegment.segmentType === "variation" || activeSegment.segmentType === "group_review");
 
   const resetLessonState = useCallback(() => {
     setSegmentIndex(0);
@@ -210,12 +212,16 @@ export default function PracticePage() {
   }, [handleNextSegment]);
 
   const handleVariationReplay = useCallback(() => {
-    const replayPool = lessonSegments.filter(
-      (segment, index) =>
-        index <= segmentIndex &&
-        segment.mode === "practice" &&
-        segment.segmentType === "variation"
-    );
+    const replayPool = lessonSegments.filter((segment, index) => {
+      if (index > segmentIndex || segment.mode !== "practice") return false;
+      if (segment.segmentType !== "variation") return false;
+
+      if (activeSegment?.segmentType === "group_review" && activeSegment.variationGroupId) {
+        return segment.variationGroupId === activeSegment.variationGroupId;
+      }
+
+      return true;
+    });
 
     if (replayPool.length === 0) return;
 
@@ -223,12 +229,38 @@ export default function PracticePage() {
     setAdHocSegment({
       ...randomSegment,
       id: `${randomSegment.id}__mixed_replay__${Date.now()}`,
-      title: `Ôn hỗn hợp: ${randomSegment.line.name}`,
+      title:
+        activeSegment?.segmentType === "group_review" && activeSegment.title
+          ? activeSegment.title
+          : `Ôn hỗn hợp: ${randomSegment.line.name}`,
       summary: "Hệ thống sẽ chọn ngẫu nhiên một biến thể đã học để bé tự nhớ lại không cần báo trước.",
       nextActionLabel: "Tập luyện lại",
     });
     setLineKey((key) => key + 1);
-  }, [lessonSegments, segmentIndex]);
+  }, [activeSegment, lessonSegments, segmentIndex]);
+
+  const handleSelectBranch = useCallback(
+    ({ groupId, variationId }: { groupId: string; variationId?: string }) => {
+      const targetIndex = lessonSegments.findIndex((segment) => {
+        if (variationId) {
+          return segment.variationId === variationId;
+        }
+
+        return (
+          segment.variationGroupId === groupId &&
+          (segment.segmentType === "variation" || segment.segmentType === "group_review")
+        );
+      });
+
+      if (targetIndex === -1) return;
+
+      setAdHocSegment(null);
+      setXpEarned(null);
+      setSegmentIndex(targetIndex);
+      setLineKey((key) => key + 1);
+    },
+    [lessonSegments]
+  );
 
   if (!currentLine) {
     return (
@@ -258,8 +290,19 @@ export default function PracticePage() {
           <span className="text-xs text-gray-400">Độ khó {currentLine.difficulty}/4</span>
         </div>
         <h1 className="text-xl font-bold text-gray-900">{currentLine.name}</h1>
+        {currentLine.guide?.summary && (
+          <p className="mt-2 text-sm leading-relaxed text-gray-700">{currentLine.guide.summary}</p>
+        )}
         <p className="text-sm text-gray-500">{currentLine.opening}</p>
       </div>
+
+      {activeSegment?.mode === "tutorial" &&
+        activeSegment.segmentType === "variation" &&
+        activeSegment.title && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-800">{activeSegment.title}</p>
+          </div>
+        )}
 
       {/* ── Practice phase label ── */}
       {activeSegment?.mode === "practice" && (
@@ -271,9 +314,11 @@ export default function PracticePage() {
                 ? "Tự đánh lại để ghi nhớ"
                 : `Tự đánh lại ${activeSegment.title}`}
             </p>
-            <p className="text-xs text-sky-700 mt-0.5">
-              {activeSegment.summary ?? activeSegment.description}
-            </p>
+            {(activeSegment.summary ?? activeSegment.description) && (
+              <p className="text-xs text-sky-700 mt-0.5">
+                {activeSegment.summary ?? activeSegment.description}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -293,6 +338,10 @@ export default function PracticePage() {
         </div>
       )}
 
+      {currentLine.bookContent?.length ? (
+        <BranchExplorer line={currentLine} onSelectBranch={handleSelectBranch} />
+      ) : null}
+
       {/* ── Chess board ── */}
       {activeSegment && (
         <ChessBoardPractice
@@ -304,13 +353,14 @@ export default function PracticePage() {
           mode={activeSegment.mode}
           onTutorialComplete={handleTutorialComplete}
           nextActionLabel={activeSegment.nextActionLabel}
+          narrationText={activeSegment.narrationText}
           onReplayLine={isVariationPracticeSegment ? handleVariationReplay : undefined}
-          replayActionLabel={isVariationPracticeSegment ? "Tập luyện lại" : undefined}
+          replayActionLabel={isVariationPracticeSegment ? "Luyện tập lại" : undefined}
           secondaryActionLabel={
             isVariationPracticeSegment
               ? isFinalSegment
                 ? "Hoàn thành bài học"
-                : "Biến thể tiếp theo"
+                : "Biến thể khác"
               : undefined
           }
         />
@@ -320,15 +370,6 @@ export default function PracticePage() {
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <XPBar stats={stats} />
       </div>
-
-      {activeSegment?.reminder && (
-        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
-          <h3 className="text-xs font-semibold uppercase text-violet-700 tracking-wide mb-2">
-            Nhắc lại trước khi đi
-          </h3>
-          <p className="text-sm text-violet-900 leading-relaxed">{activeSegment.reminder}</p>
-        </div>
-      )}
 
       {/* ── Line info ── */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">

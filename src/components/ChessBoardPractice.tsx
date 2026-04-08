@@ -31,6 +31,7 @@ interface ChessBoardPracticeProps {
   /** "tutorial" = guided demo (player plays both sides following arrows), "practice" = normal practice */
   mode?: "tutorial" | "practice";
   onTutorialComplete?: () => void;
+  narrationText?: string;
 }
 
 type GamePhase = "playing" | "opponent" | "completed";
@@ -39,6 +40,8 @@ const STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const OPPONENT_MOVE_DELAY_MS = 2000;
 const MAIN_BOARD_WIDTH_CLASS = "max-w-[420px]";
 const BLUNDER_BOARD_WIDTH_CLASS = "max-w-[240px]";
+const NARRATION_TYPE_DELAY_MS = 38;
+const NARRATION_HIDE_DELAY_MS = 3000;
 const BOARD_SQUARES = Array.from({ length: 8 }, (_, rankOffset) =>
   Array.from({ length: 8 }, (_, fileOffset) => {
     const file = String.fromCharCode("a".charCodeAt(0) + fileOffset);
@@ -108,6 +111,32 @@ function getOverlayPosition(square: string, orientation: "white" | "black") {
   return {
     left: `calc(${leftIndex * 12.5}% + 6.25%)`,
     top: `calc(${topIndex * 12.5}% + 6.25%)`,
+  };
+}
+
+function getPosEvalPresentation(posEval?: string) {
+  if (!posEval) return null;
+
+  if (posEval === "+-") {
+    return {
+      icon: "⬆⬆",
+      label: "Trắng thắng rõ",
+      className: "border-rose-200 bg-rose-50 text-rose-700",
+    };
+  }
+
+  if (posEval === "±" || posEval === "+=") {
+    return {
+      icon: "⬆",
+      label: "Trắng ưu thế",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+
+  return {
+    icon: "=",
+    label: "Đánh giá vị trí",
+    className: "border-slate-200 bg-slate-50 text-slate-700",
   };
 }
 
@@ -320,6 +349,7 @@ export default function ChessBoardPractice({
   correctStreak = 0,
   mode = "practice",
   onTutorialComplete,
+  narrationText,
 }: ChessBoardPracticeProps) {
   const gameRef = useRef(new Chess());
   const [fen, setFen] = useState<string>(line.fenStart || STARTING_FEN);
@@ -341,6 +371,8 @@ export default function ChessBoardPractice({
   const [instructionText, setInstructionText] = useState("");
   const [isInstructionVisible, setIsInstructionVisible] = useState(false);
   const [isNarrationLocked, setIsNarrationLocked] = useState(false);
+  const [instructionFullText, setInstructionFullText] = useState("");
+  const [isTextOnlySegment, setIsTextOnlySegment] = useState(false);
   const opponentMoveTimerRef = useRef<number | null>(null);
   const typingTimerRef = useRef<number | null>(null);
   const narrationHideTimerRef = useRef<number | null>(null);
@@ -351,6 +383,12 @@ export default function ChessBoardPractice({
   const plies: MoveNode[] = line.moves;
   const currentPly: MoveNode | undefined = plies[currentPlyIndex];
   const completedPly = currentPlyIndex;
+  const currentPosEval =
+    (phase === "completed"
+      ? [...plies].reverse().find((move) => move.posEval)?.posEval
+      : [...plies.slice(0, currentPlyIndex)].reverse().find((move) => move.posEval)?.posEval) ??
+    currentPly?.posEval;
+  const posEvalPresentation = getPosEvalPresentation(currentPosEval);
   const activeStrategicMotif = [...(line.strategicMotifs ?? [])]
     .sort((a, b) => b.triggerPly - a.triggerPly)
     .find((motif) => completedPly >= motif.triggerPly);
@@ -415,7 +453,7 @@ export default function ChessBoardPractice({
     setMistakeMove("");
     setAttemptMoves([]);
     setHadMistake(false);
-    setLearnerSide("w");
+    setLearnerSide(line.preferredLearnerSide ?? "w");
     setSelectedSquare(null);
     setArrow([]);
     setHoverArrows([]);
@@ -425,7 +463,9 @@ export default function ChessBoardPractice({
     setInstructionText("");
     setIsInstructionVisible(false);
     setIsNarrationLocked(false);
-  }, [clearNarration, clearOpponentTimer, line.fenStart]);
+    setInstructionFullText("");
+    setIsTextOnlySegment(false);
+  }, [clearNarration, clearOpponentTimer, line.fenStart, line.preferredLearnerSide]);
 
   // ─── Advance logic ──────────────────────────────────────────────────────────
 
@@ -447,33 +487,25 @@ export default function ChessBoardPractice({
         return;
       }
 
-      if (isTutorial) {
-        // Tutorial: all plies are user-controlled
+      if (ply.side === learnerSide) {
         setPhase("playing");
         setCurrentPlyIndex(plyIndex);
         setMistakeMove("");
         setTutorialHint("");
         setActiveBlunderId(null);
-        // Compute and show arrow
+        setExplanation("");
+        if (!isTutorial) {
+          setFeedback(getPreviewExplanation(ply.explain, ply.tags));
+        }
         const arrowEntry = sanToArrow(gameRef.current, ply.validMoves[0] ?? "");
         setArrow(arrowEntry ? [arrowEntry] : []);
-        return;
-      }
-
-      // ── Practice mode: original behaviour ──
-      if (ply.side === learnerSide) {
-        setPhase("playing");
-        setCurrentPlyIndex(plyIndex);
-        setMistakeMove("");
-        setExplanation("");
-        setActiveBlunderId(null);
-        setFeedback(getPreviewExplanation(ply.explain, ply.tags));
         return;
       }
 
       setPhase("opponent");
       setCurrentPlyIndex(plyIndex);
       setFeedback(null);
+      setArrow([]);
 
       opponentMoveTimerRef.current = window.setTimeout(() => {
         const autoMove = ply.validMoves[0];
@@ -498,25 +530,26 @@ export default function ChessBoardPractice({
 
   useEffect(() => {
     resetBoard();
-    if (line.moves.length === 0) return;
+    if (line.moves.length === 0) {
+      if (isTutorial && narrationText?.trim()) {
+        setIsTextOnlySegment(true);
+        setPhase("playing");
+      }
+      return;
+    }
 
     const firstPly = line.moves[0];
-    const side = firstPly.side;
+    const preferredLearnerSide = line.preferredLearnerSide ?? "w";
+    const orientation = preferredLearnerSide === "w" ? "white" : "black";
+
+    setLearnerSide(preferredLearnerSide);
+    setBoardOrientation(orientation);
 
     if (isTutorial) {
-      setBoardOrientation(side === "w" ? "white" : "black");
-      setCurrentPlyIndex(0);
-      setPhase("playing");
-      // Compute arrow for the first ply
-      const firstArrow = sanToArrow(gameRef.current, firstPly.validMoves[0] ?? "");
-      setArrow(firstArrow ? [firstArrow] : []);
+      advanceAutoMoves(0);
     } else {
-      setLearnerSide(side);
-      setBoardOrientation(side === "w" ? "white" : "black");
       setFeedback(getPreviewExplanation(firstPly.explain, firstPly.tags));
-      if (side !== gameRef.current.turn()) {
-        advanceAutoMoves(0);
-      }
+      advanceAutoMoves(0);
     }
     // We intentionally restart the board only when the lesson segment changes.
     // Including stateful callbacks here would reset the board after every move.
@@ -524,17 +557,24 @@ export default function ChessBoardPractice({
   }, [line.id, isTutorial]);
 
   useEffect(() => {
-    if (!isTutorial || !currentPly || phase === "completed") {
+    const activeNarrationText =
+      isTextOnlySegment && narrationText?.trim()
+        ? narrationText.trim()
+        : currentPly?.explain ?? feedback?.message ?? "";
+
+    if (!isTutorial || phase === "completed" || (!currentPly && !isTextOnlySegment)) {
       clearNarration();
       setInstructionText("");
+      setInstructionFullText("");
       setIsInstructionVisible(false);
       setIsNarrationLocked(false);
       return;
     }
 
-    const text = (currentPly.explain ?? "Đi theo mũi tên xanh trên bàn cờ nhé!").trim();
+    const text = activeNarrationText.trim();
     if (!text) {
       setInstructionText("");
+      setInstructionFullText("");
       setIsInstructionVisible(false);
       setIsNarrationLocked(false);
       return;
@@ -552,10 +592,15 @@ export default function ChessBoardPractice({
         if (narrationRunIdRef.current !== runId) return;
         setIsInstructionVisible(false);
         setIsNarrationLocked(false);
-      }, 450);
+        if (isTextOnlySegment) {
+          setPhase("completed");
+          onTutorialComplete?.();
+        }
+      }, NARRATION_HIDE_DELAY_MS);
     };
 
     setInstructionText("");
+    setInstructionFullText(text);
     setIsInstructionVisible(true);
     setIsNarrationLocked(true);
 
@@ -571,12 +616,12 @@ export default function ChessBoardPractice({
         typeDone = true;
         finishNarrationIfReady();
       }
-    }, 28);
+    }, NARRATION_TYPE_DELAY_MS);
 
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "vi-VN";
-      utterance.rate = 0.92;
+      utterance.rate = 0.84;
       utterance.pitch = 1;
       utterance.onend = () => {
         speechDone = true;
@@ -596,7 +641,18 @@ export default function ChessBoardPractice({
     return () => {
       clearNarration();
     };
-  }, [clearNarration, currentPly, isTutorial, phase]);
+  }, [clearNarration, currentPly, feedback?.message, isTextOnlySegment, isTutorial, narrationText, onTutorialComplete, phase]);
+
+  const handleDismissInstruction = useCallback(() => {
+    clearNarration();
+    setInstructionText(instructionFullText);
+    setIsInstructionVisible(false);
+    setIsNarrationLocked(false);
+    if (isTextOnlySegment) {
+      setPhase("completed");
+      onTutorialComplete?.();
+    }
+  }, [clearNarration, instructionFullText, isTextOnlySegment, onTutorialComplete]);
 
   useEffect(() => {
     if (!activeJourneyId) return;
@@ -639,7 +695,7 @@ export default function ChessBoardPractice({
         if (!correct) {
           game.undo();
           setFen(game.fen());
-          setTutorialHint("Hãy đi theo mũi tên xanh nhé! 😊");
+          setTutorialHint("Nước này chưa đúng với nhánh đang học. Mình thử lại nhé.");
           return false;
         }
         setTutorialHint("");
@@ -735,18 +791,14 @@ export default function ChessBoardPractice({
     [attemptMove]
   );
 
-  // In tutorial: the current ply's side is whose turn it is
-  const currentTurnSide = isTutorial
-    ? (currentPly?.side ?? gameRef.current.turn() as "w" | "b")
-    : learnerSide;
+  const currentTurnSide = learnerSide;
 
   const isUserTurn =
     phase === "playing" &&
     !isNarrationLocked &&
     !!currentPly &&
-    (isTutorial
-      ? gameRef.current.turn() === currentPly.side
-      : currentPly.side === learnerSide && gameRef.current.turn() === learnerSide);
+    currentPly.side === learnerSide &&
+    gameRef.current.turn() === learnerSide;
 
   const possibleTargets = selectedSquare
     ? gameRef.current
@@ -901,11 +953,30 @@ export default function ChessBoardPractice({
               </div>
             </div>
           )}
+          {posEvalPresentation && (
+            <div className="pointer-events-none absolute right-3 top-3 z-10">
+              <div
+                className={`rounded-full border px-3 py-1 text-[11px] font-semibold shadow-sm ${posEvalPresentation.className}`}
+              >
+                {posEvalPresentation.icon} {currentPosEval} · {posEvalPresentation.label}
+              </div>
+            </div>
+          )}
           {isInstructionVisible && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-slate-950/45 px-5">
-              <div className="max-w-[85%] rounded-3xl border border-white/15 bg-white/96 px-5 py-4 text-center shadow-2xl">
+              <div className="pointer-events-auto max-w-[85%] rounded-3xl border border-white/15 bg-white/96 px-5 py-4 text-center shadow-2xl">
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleDismissInstruction}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-600">
-                  {currentPly?.side === "w" ? "Lượt trắng" : "Lượt đen"} • nước {currentPly?.ply}
+                  {isTextOnlySegment
+                    ? "Đang đọc nội dung"
+                    : `${currentPly?.side === "w" ? "Lượt trắng" : "Lượt đen"} • nước ${currentPly?.ply}`}
                 </p>
                 <p className="mt-3 text-base font-medium leading-relaxed text-slate-900 min-h-[4.5rem]">
                   {instructionText}
@@ -931,7 +1002,7 @@ export default function ChessBoardPractice({
             dragActivationDistance: 6,
             canDragPiece: ({ piece }) =>
               !isNarrationLocked &&
-              piece.pieceType.startsWith(isTutorial ? currentTurnSide : learnerSide),
+              piece.pieceType.startsWith(learnerSide),
             squareStyles,
             arrows: displayedArrows,
             boardStyle: {
@@ -1073,6 +1144,19 @@ export default function ChessBoardPractice({
                 <p className="text-sm font-semibold text-sky-900">{feedback.title}</p>
                 <p className="mt-1 text-sm text-sky-800">{feedback.message}</p>
                 <p className="mt-1 text-sm text-sky-700">{feedback.detail}</p>
+              </div>
+            )}
+            {posEvalPresentation && (
+              <div className={`mt-2 rounded-lg border px-3 py-3 ${posEvalPresentation.className}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide">
+                  Đánh Giá Vị Trí
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {posEvalPresentation.icon} {currentPosEval}
+                </p>
+                <p className="mt-1 text-sm">
+                  {posEvalPresentation.label}. Mốc này lấy trực tiếp từ `posEval` trong data bài học.
+                </p>
               </div>
             )}
             {activeJourney && (
