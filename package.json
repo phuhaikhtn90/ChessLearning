@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "validate:italian-book": "node scripts/validate-italian-book.mjs",
+    "pdf:read": "node scripts/read-pdf.mjs",
+    "compare:italian-book": "node scripts/compare-italian-book-to-pdf.mjs"
   },
   "dependencies": {
     "chess.js": "^1.4.0",

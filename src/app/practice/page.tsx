@@ -22,6 +22,7 @@ import { updateProgress } from "@/lib/spacedRepetition";
 import { buildLessonSegments, LessonSegment } from "@/lib/lessonFlow";
 import XPBar from "@/components/XPBar";
 import BranchExplorer from "@/components/BranchExplorer";
+import RichChessText from "@/components/RichChessText";
 
 // Dynamically import chess board to avoid SSR issues
 const ChessBoardPractice = dynamic(
@@ -48,6 +49,9 @@ export default function PracticePage() {
   const [lessonMoves, setLessonMoves] = useState<PracticeMove[]>([]);
   const [lessonHadMistake, setLessonHadMistake] = useState(false);
   const [adHocSegment, setAdHocSegment] = useState<LessonSegment | null>(null);
+  const [currentBranchMoveKey, setCurrentBranchMoveKey] = useState<string | null>(null);
+  const [branchPreviewMove, setBranchPreviewMove] = useState<{ from: string; to: string; san: string } | null>(null);
+  const [branchForkPreviews, setBranchForkPreviews] = useState<Array<{ from: string; to: string; label: string }>>([]);
 
   const lessonSegments = useMemo(
     () => (currentLine ? buildLessonSegments(currentLine) : []),
@@ -59,6 +63,75 @@ export default function PracticePage() {
   const isVariationPracticeSegment =
     activeSegment?.mode === "practice" &&
     (activeSegment.segmentType === "variation" || activeSegment.segmentType === "group_review");
+  const nextPracticeSegmentTitle = useMemo(() => {
+    if (adHocSegment || !currentSegment) return null;
+
+    const nextSegment = lessonSegments.slice(segmentIndex + 1).find((segment) => {
+      return (
+        segment.mode === "practice" &&
+        (segment.segmentType === "variation" || segment.segmentType === "group_review")
+      );
+    });
+
+    return nextSegment?.title ?? null;
+  }, [adHocSegment, currentSegment, lessonSegments, segmentIndex]);
+
+  const handleBoardProgressChange = useCallback(
+    ({
+      currentMoveKey,
+      phase,
+    }: {
+      currentMoveKey: string | null;
+      fen: string;
+      phase: "playing" | "opponent" | "completed";
+    }) => {
+      setCurrentBranchMoveKey((previous) => (previous === currentMoveKey ? previous : currentMoveKey));
+      setBranchPreviewMove((previous) => (previous === null ? previous : null));
+      if (phase !== "playing") {
+        setBranchForkPreviews((previous) => (previous.length === 0 ? previous : []));
+      }
+    },
+    []
+  );
+
+  const handleBranchPreviewChange = useCallback(
+    ({
+      move,
+      forks,
+    }: {
+      move: { from: string; to: string; san: string } | null;
+      forks: Array<{ from: string; to: string; label: string }>;
+    }) => {
+      setBranchPreviewMove((previous) => {
+        const nextMove = move ? { from: move.from, to: move.to, san: move.san } : null;
+        if (
+          previous?.from === nextMove?.from &&
+          previous?.to === nextMove?.to &&
+          previous?.san === nextMove?.san
+        ) {
+          return previous;
+        }
+        return nextMove;
+      });
+
+      setBranchForkPreviews((previous) => {
+        if (
+          previous.length === forks.length &&
+          previous.every(
+            (fork, index) =>
+              fork.from === forks[index]?.from &&
+              fork.to === forks[index]?.to &&
+              fork.label === forks[index]?.label
+          )
+        ) {
+          return previous;
+        }
+
+        return forks;
+      });
+    },
+    []
+  );
 
   const resetLessonState = useCallback(() => {
     setSegmentIndex(0);
@@ -67,6 +140,9 @@ export default function PracticePage() {
     setLessonHadMistake(false);
     setXpEarned(null);
     setAdHocSegment(null);
+    setCurrentBranchMoveKey(null);
+    setBranchPreviewMove(null);
+    setBranchForkPreviews([]);
   }, []);
 
   // Load data on mount
@@ -291,7 +367,9 @@ export default function PracticePage() {
         </div>
         <h1 className="text-xl font-bold text-gray-900">{currentLine.name}</h1>
         {currentLine.guide?.summary && (
-          <p className="mt-2 text-sm leading-relaxed text-gray-700">{currentLine.guide.summary}</p>
+          <div className="mt-2 text-sm leading-relaxed text-gray-700">
+            <RichChessText text={currentLine.guide.summary} />
+          </div>
         )}
         <p className="text-sm text-gray-500">{currentLine.opening}</p>
       </div>
@@ -338,32 +416,50 @@ export default function PracticePage() {
         </div>
       )}
 
-      {currentLine.bookContent?.length ? (
-        <BranchExplorer line={currentLine} onSelectBranch={handleSelectBranch} />
-      ) : null}
+      {(activeSegment || currentLine.bookContent?.length) && (
+        <div className="xl:grid xl:grid-cols-[minmax(500px,560px)_minmax(560px,1fr)] xl:items-start xl:justify-start xl:gap-8">
+          <div className="min-w-0">
+            {/* ── Chess board ── */}
+            {activeSegment && (
+              <ChessBoardPractice
+                key={lineKey}
+                line={activeSegment.line}
+                onComplete={handleComplete}
+                onProgressChange={handleBoardProgressChange}
+                previewMove={branchPreviewMove}
+                forkPreviewMoves={branchForkPreviews}
+                segmentTitle={activeSegment.title}
+                nextSegmentTitle={nextPracticeSegmentTitle}
+                onNextLine={handleNextLine}
+                correctStreak={progressMap[currentLine.id]?.correctStreak ?? 0}
+                mode={activeSegment.mode}
+                onTutorialComplete={handleTutorialComplete}
+                nextActionLabel={activeSegment.nextActionLabel}
+                narrationText={activeSegment.narrationText}
+                onReplayLine={isVariationPracticeSegment ? handleVariationReplay : undefined}
+                replayActionLabel={isVariationPracticeSegment ? "Đánh lại ngay" : undefined}
+                secondaryActionLabel={
+                  isVariationPracticeSegment
+                    ? isFinalSegment
+                      ? "Kết thúc chương"
+                      : "Sang nhánh kế"
+                    : undefined
+                }
+              />
+            )}
+          </div>
 
-      {/* ── Chess board ── */}
-      {activeSegment && (
-        <ChessBoardPractice
-          key={lineKey}
-          line={activeSegment.line}
-          onComplete={handleComplete}
-          onNextLine={handleNextLine}
-          correctStreak={progressMap[currentLine.id]?.correctStreak ?? 0}
-          mode={activeSegment.mode}
-          onTutorialComplete={handleTutorialComplete}
-          nextActionLabel={activeSegment.nextActionLabel}
-          narrationText={activeSegment.narrationText}
-          onReplayLine={isVariationPracticeSegment ? handleVariationReplay : undefined}
-          replayActionLabel={isVariationPracticeSegment ? "Luyện tập lại" : undefined}
-          secondaryActionLabel={
-            isVariationPracticeSegment
-              ? isFinalSegment
-                ? "Hoàn thành bài học"
-                : "Biến thể khác"
-              : undefined
-          }
-        />
+          {currentLine.bookContent?.length ? (
+            <div className="mt-5 min-w-0 xl:mt-0 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:pr-2">
+              <BranchExplorer
+                line={currentLine}
+                onSelectBranch={handleSelectBranch}
+                currentMoveKey={currentBranchMoveKey}
+                onPreviewChange={handleBranchPreviewChange}
+              />
+            </div>
+          ) : null}
+        </div>
       )}
 
       {/* ── XP bar ── */}

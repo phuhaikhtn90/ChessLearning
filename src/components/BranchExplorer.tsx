@@ -1,23 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
 import { Chess } from "chess.js";
 import { BookFlowVariationGroupNode, BookFlowVariationNode, OpeningLine } from "@/types";
-
-const StaticChessboard = dynamic(
-  () => import("react-chessboard").then((mod) => mod.Chessboard),
-  {
-    ssr: false,
-    loading: () => <div className="aspect-square w-full rounded-2xl bg-slate-200 animate-pulse" />,
-  }
-);
 
 interface BranchMove {
   san: string;
   ply: number;
   side: "w" | "b";
+  piece: "p" | "n" | "b" | "r" | "q" | "k";
+  from: string;
+  to: string;
   fenAfter: string;
+}
+
+function sanitizeSan(san: string) {
+  return san.replace(/[!?]+/g, "");
 }
 
 interface BranchOption {
@@ -25,7 +23,9 @@ interface BranchOption {
   title: string;
   groupId: string;
   variationId?: string;
+  branchPointKey: string | null;
   moves: BranchMove[];
+  displayMoves: BranchMove[];
   children: BranchOption[];
 }
 
@@ -38,6 +38,15 @@ interface BranchGroup {
 interface BranchExplorerProps {
   line: OpeningLine;
   onSelectBranch: (selection: { groupId: string; variationId?: string }) => void;
+  currentMoveKey?: string | null;
+  onPreviewChange?: (preview: {
+    move: BranchMove | null;
+    forks: Array<{ from: string; to: string; label: string }>;
+  }) => void;
+}
+
+function getBranchMoveKey(move: Pick<BranchMove, "ply" | "san">) {
+  return `${move.ply}-${move.san}`;
 }
 
 function getStartingPlyFromFen(fen: string): number {
@@ -57,6 +66,8 @@ function applyMoveOrThrow(chess: Chess, san: string) {
   if (!result) {
     throw new Error(`Illegal SAN while building branch explorer: ${san}`);
   }
+
+  return result;
 }
 
 function buildMoveNode(
@@ -65,11 +76,15 @@ function buildMoveNode(
   ply: number,
   side: "w" | "b"
 ): BranchMove {
-  applyMoveOrThrow(chess, san);
+  const sanitizedSan = sanitizeSan(san);
+  const result = applyMoveOrThrow(chess, sanitizedSan);
   return {
-    san,
+    san: sanitizedSan,
     ply,
     side,
+    piece: result.piece,
+    from: result.from,
+    to: result.to,
     fenAfter: chess.fen(),
   };
 }
@@ -79,23 +94,34 @@ function buildVariationOption(
   startFen: string,
   startPly: number,
   groupId: string,
-  ancestorMoves: BranchMove[]
+  ancestorMoves: BranchMove[],
+  branchPointKey: string | null
 ): BranchOption {
   const chess = new Chess(startFen);
   const moves = [...ancestorMoves];
+  const displayMoves: BranchMove[] = [];
   const children: BranchOption[] = [];
   let currentPly = startPly;
 
   variation.flow.forEach((node) => {
     if (node.type === "move") {
-      moves.push(buildMoveNode(chess, node.notation, currentPly, node.side));
+      const builtMove = buildMoveNode(chess, node.notation, currentPly, node.side);
+      moves.push(builtMove);
+      displayMoves.push(builtMove);
       currentPly += 1;
       return;
     }
 
     if (node.type === "variation") {
       children.push(
-        buildVariationOption(node, chess.fen(), currentPly, groupId, [...moves])
+        buildVariationOption(
+          node,
+          chess.fen(),
+          currentPly,
+          groupId,
+          [...moves],
+          moves.length > 0 ? getBranchMoveKey(moves[moves.length - 1]) : branchPointKey
+        )
       );
     }
   });
@@ -105,7 +131,9 @@ function buildVariationOption(
     title: variation.title,
     groupId,
     variationId: variation.id,
+    branchPointKey,
     moves,
+    displayMoves,
     children,
   };
 }
@@ -129,7 +157,16 @@ function buildGroupOverview(
     }
 
     if (node.type === "variation") {
-      options.push(buildVariationOption(node, chess.fen(), currentPly, groupId, [...prefixMoves]));
+      options.push(
+        buildVariationOption(
+          node,
+          chess.fen(),
+          currentPly,
+          groupId,
+          [...prefixMoves],
+          prefixMoves.length > 0 ? getBranchMoveKey(prefixMoves[prefixMoves.length - 1]) : null
+        )
+      );
     }
   });
 
@@ -138,7 +175,9 @@ function buildGroupOverview(
       id: `${groupId}__main`,
       title: group.title,
       groupId,
+      branchPointKey: prefixMoves.length > 0 ? getBranchMoveKey(prefixMoves[prefixMoves.length - 1]) : null,
       moves: prefixMoves,
+      displayMoves: prefixMoves,
       children: [],
     });
   }
@@ -186,29 +225,94 @@ function buildBranchGroups(line: OpeningLine): BranchGroup[] {
 function MoveSequence({
   moves,
   onPickMove,
+  selectedMoveKey,
 }: {
   moves: BranchMove[];
   onPickMove: (move: BranchMove) => void;
+  selectedMoveKey: string | null;
 }) {
   if (moves.length === 0) return null;
 
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
+    <div className="mt-1 flex flex-wrap gap-1">
       {moves.map((move) => (
         <button
           key={`${move.ply}-${move.san}`}
           onClick={() => onPickMove(move)}
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+          className={`rounded-md border px-1.5 py-0.5 text-left text-[10px] font-medium leading-4 transition-colors ${
+            selectedMoveKey === `${move.ply}-${move.san}`
+              ? "border-emerald-400 bg-emerald-50 text-emerald-900 shadow-sm ring-2 ring-emerald-200"
+              : ""
+          } ${
             move.side === "w"
-              ? "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+              ? "border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:text-sky-700"
+              : "border-slate-200 bg-slate-50/55 text-slate-600 hover:border-slate-400 hover:text-slate-800"
           }`}
+          style={{ maxWidth: "100%" }}
         >
-          {move.ply % 2 === 1 ? `${Math.ceil(move.ply / 2)}.` : "..."} {move.san}
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`text-sm leading-none ${
+                move.side === "w" ? "text-slate-900" : "text-slate-500"
+              }`}
+              aria-hidden="true"
+            >
+              {getPieceGlyph(move)}
+            </span>
+            <span>
+              {move.ply % 2 === 1 ? `${Math.ceil(move.ply / 2)}.` : "..."} {move.san}
+            </span>
+          </span>
         </button>
       ))}
     </div>
   );
+}
+
+function getPieceGlyph(move: BranchMove) {
+  const glyphs: Record<BranchMove["piece"], { w: string; b: string }> = {
+    p: { w: "♙", b: "♟" },
+    n: { w: "♘", b: "♞" },
+    b: { w: "♗", b: "♝" },
+    r: { w: "♖", b: "♜" },
+    q: { w: "♕", b: "♛" },
+    k: { w: "♔", b: "♚" },
+  };
+
+  return glyphs[move.piece][move.side];
+}
+
+function getSiblingForkPreview(
+  options: BranchOption[],
+  currentMoveKey: string
+): { move: BranchMove | null; forks: Array<{ from: string; to: string; label: string }> } | null {
+  const matchingIndex = options.findIndex(
+    (option) => option.displayMoves[0] && getBranchMoveKey(option.displayMoves[0]) === currentMoveKey
+  );
+
+  if (matchingIndex >= 0) {
+    const move = options[matchingIndex].displayMoves[0] ?? null;
+    const forks = options
+      .map((option, index) => {
+        const firstMove = option.displayMoves[0];
+        if (!firstMove) return null;
+        return {
+          from: firstMove.from,
+          to: firstMove.to,
+          label: String(index + 1),
+        };
+      })
+      .filter((fork): fork is { from: string; to: string; label: string } => !!fork);
+
+    return { move, forks };
+  }
+
+  for (const option of options) {
+    const nested = getSiblingForkPreview(option.children, currentMoveKey);
+    if (nested) return nested;
+  }
+
+  return null;
 }
 
 function BranchOptionCard({
@@ -216,22 +320,31 @@ function BranchOptionCard({
   depth,
   onPickMove,
   onSelectBranch,
+  selectedMoveKey,
+  isLastChild = false,
 }: {
   option: BranchOption;
   depth: number;
   onPickMove: (move: BranchMove) => void;
   onSelectBranch: (selection: { groupId: string; variationId?: string }) => void;
+  selectedMoveKey: string | null;
+  isLastChild?: boolean;
 }) {
   return (
-    <div
-      className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${
-        depth > 0 ? "mt-3 ml-4" : ""
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{option.title}</p>
-        </div>
+    <div className={`relative ${depth > 0 ? "pl-4" : ""}`}>
+      {depth > 0 && (
+        <>
+          <div
+            className={`absolute left-1.5 top-0 w-px bg-slate-300 ${
+              isLastChild ? "h-4" : "h-full"
+            }`}
+          />
+          <div className="absolute left-1.5 top-4 h-px w-3 bg-slate-300" />
+          <div className="absolute left-[1px] top-[7px] text-[10px] text-slate-400">↳</div>
+        </>
+      )}
+
+      <div className="rounded-lg bg-white/60 px-1.5 py-1">
         <button
           onClick={() =>
             onSelectBranch({
@@ -239,108 +352,113 @@ function BranchOptionCard({
               variationId: option.variationId,
             })
           }
-          className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+          className="w-full text-left"
         >
-          Học nhánh này
+          <p className="text-[11px] font-semibold leading-5 text-slate-900 sm:text-xs">
+            {option.title}
+          </p>
         </button>
+
+        <MoveSequence
+          moves={option.displayMoves}
+          onPickMove={onPickMove}
+          selectedMoveKey={selectedMoveKey}
+        />
+
+        {option.children.length > 0 && (
+          <div className="mt-1.5 space-y-1">
+            {option.children.map((child, index) => (
+              <BranchOptionCard
+                key={child.id}
+                option={child}
+                depth={depth + 1}
+                onPickMove={onPickMove}
+                onSelectBranch={onSelectBranch}
+                selectedMoveKey={selectedMoveKey}
+                isLastChild={index === option.children.length - 1}
+              />
+            ))}
+          </div>
+        )}
       </div>
-
-      <MoveSequence moves={option.moves} onPickMove={onPickMove} />
-
-      {option.children.length > 0 && (
-        <div className="mt-3">
-          {option.children.map((child) => (
-            <BranchOptionCard
-              key={child.id}
-              option={child}
-              depth={depth + 1}
-              onPickMove={onPickMove}
-              onSelectBranch={onSelectBranch}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-export default function BranchExplorer({ line, onSelectBranch }: BranchExplorerProps) {
+export default function BranchExplorer({
+  line,
+  onSelectBranch,
+  currentMoveKey,
+  onPreviewChange,
+}: BranchExplorerProps) {
   const branchGroups = useMemo(() => buildBranchGroups(line), [line]);
-  const [previewFen, setPreviewFen] = useState(line.fenStart);
-  const [previewLabel, setPreviewLabel] = useState("Vị trí khởi đầu của chapter");
+  const [selectedMoveKey, setSelectedMoveKey] = useState<string | null>(null);
+  const activeMoveKey = currentMoveKey ?? selectedMoveKey;
+
+  useEffect(() => {
+    if (!currentMoveKey) return;
+
+    for (const group of branchGroups) {
+      const preview = getSiblingForkPreview(group.options, currentMoveKey);
+      if (preview) {
+        onPreviewChange?.(preview);
+        return;
+      }
+    }
+  }, [branchGroups, currentMoveKey, onPreviewChange]);
 
   if (branchGroups.length === 0) return null;
 
   return (
-    <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-5 shadow-sm">
-      <div className="flex flex-col gap-5 lg:flex-row">
-        <div className="lg:w-[320px] lg:flex-none">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+    <div className="w-full overflow-hidden rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-2.5 shadow-sm">
+      <div className="space-y-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
             Sơ đồ nhánh
           </p>
-          <p className="mt-2 text-sm text-slate-700">
-            Bấm vào một nước đi để xem bàn cờ tại thời điểm đó, hoặc chọn thẳng nhánh bạn muốn học.
-          </p>
-          <div className="mt-4 overflow-hidden rounded-2xl ring-1 ring-slate-200">
-            <StaticChessboard
-              options={{
-                id: `branch-preview-${line.id}`,
-                position: previewFen,
-                boardOrientation: "white",
-                allowDragging: false,
-                boardStyle: {
-                  borderRadius: "8px",
-                  boxShadow: "0 8px 20px rgba(15,23,42,0.14)",
-                },
-              }}
-            />
-          </div>
-          <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Preview
-            </p>
-            <p className="mt-1 text-sm text-slate-800">{previewLabel}</p>
-            <button
-              onClick={() => {
-                setPreviewFen(line.fenStart);
-                setPreviewLabel("Vị trí khởi đầu của chapter");
-              }}
-              className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
-            >
-              Quay về ban đầu
-            </button>
-          </div>
         </div>
 
-        <div className="min-w-0 flex-1 space-y-4">
+        <div className="min-w-0 space-y-1.5">
           {branchGroups.map((group) => (
-            <div key={group.id} className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-base font-semibold text-amber-950">{group.title}</p>
+            <div key={group.id} className="w-full">
+              <div className="flex items-start gap-1.5">
+                <div className="pt-0.5 text-xs text-amber-700">┌</div>
+                <div className="min-w-0">
+                  <button
+                    onClick={() => onSelectBranch({ groupId: group.id })}
+                    className="text-left"
+                  >
+                    <p className="text-xs font-semibold leading-5 text-amber-950">
+                      {group.title}
+                    </p>
+                  </button>
                 </div>
-                <button
-                  onClick={() => onSelectBranch({ groupId: group.id })}
-                  className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                >
-                  Học nhánh lớn
-                </button>
               </div>
 
-              <div className="mt-3 space-y-3">
+              <div className="mt-1.5 space-y-1.5 pl-3">
                 {group.options.map((option) => (
                   <BranchOptionCard
                     key={option.id}
                     option={option}
                     depth={0}
                     onSelectBranch={onSelectBranch}
+                    selectedMoveKey={activeMoveKey}
                     onPickMove={(move) => {
-                      setPreviewFen(move.fenAfter);
-                      setPreviewLabel(
-                        `${move.side === "w" ? "Trắng" : "Đen"} vừa đi ${move.san} ở nước ${Math.ceil(
-                          move.ply / 2
-                        )}`
-                      );
+                      setSelectedMoveKey(getBranchMoveKey(move));
+                      onPreviewChange?.({
+                        move,
+                        forks: option.children
+                          .map((child, index) => {
+                            const firstMove = child.displayMoves[0];
+                            if (!firstMove) return null;
+                            return {
+                              from: firstMove.from,
+                              to: firstMove.to,
+                              label: String(index + 1),
+                            };
+                          })
+                          .filter((fork): fork is { from: string; to: string; label: string } => !!fork),
+                      });
                     }}
                   />
                 ))}

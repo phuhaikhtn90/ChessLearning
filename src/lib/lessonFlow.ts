@@ -53,22 +53,27 @@ function cloneLine(
   };
 }
 
+function sanitizeSan(san: string) {
+  return san.replace(/[!?]+/g, "");
+}
+
 function buildMoveNode(
   node: Extract<BookContentNode, { type: "move" }>,
   ply: number
 ): MoveNode {
+  const sanitizedNotation = sanitizeSan(node.notation);
   return {
     ply,
     side: node.side,
-    move: node.notation,
-    validMoves: [node.notation],
+    move: sanitizedNotation,
+    validMoves: [sanitizedNotation],
     moveEval: node.moveEval,
     posEval: node.posEval,
   };
 }
 
 function applyMoveOrThrow(chess: Chess, san: string) {
-  const result = chess.move(san);
+  const result = chess.move(sanitizeSan(san));
   if (!result) {
     throw new Error(`Illegal SAN while building lesson flow: ${san}`);
   }
@@ -313,7 +318,7 @@ function buildVariationGroupSegments(
       shortLabel: "Ôn nhánh lớn",
       description: "",
       summary: undefined,
-      nextActionLabel: isLastGroup ? "Hoàn thành bài học" : "Biến thể khác",
+      nextActionLabel: isLastGroup ? "Kết thúc chương" : "Sang nhánh tiếp theo",
       segmentType: "group_review",
       variationGroupId: `group_${groupIndex}`,
     });

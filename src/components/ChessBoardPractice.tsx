@@ -12,6 +12,7 @@ import {
   getRewardMessage,
   MoveFeedback,
 } from "@/lib/explanationEngine";
+import RichChessText from "@/components/RichChessText";
 
 interface PracticeMove {
   ply: number;
@@ -22,6 +23,11 @@ interface PracticeMove {
 interface ChessBoardPracticeProps {
   line: OpeningLine;
   onComplete: (moves: PracticeMove[], perfect: boolean) => void;
+  onProgressChange?: (progress: { currentMoveKey: string | null; fen: string; phase: GamePhase }) => void;
+  previewMove?: { from: string; to: string; san: string } | null;
+  forkPreviewMoves?: Array<{ from: string; to: string; label: string }>;
+  segmentTitle?: string;
+  nextSegmentTitle?: string | null;
   onNextLine?: () => void;
   onReplayLine?: () => void;
   nextActionLabel?: string;
@@ -38,10 +44,8 @@ type GamePhase = "playing" | "opponent" | "completed";
 
 const STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const OPPONENT_MOVE_DELAY_MS = 2000;
-const MAIN_BOARD_WIDTH_CLASS = "max-w-[420px]";
+const MAIN_BOARD_WIDTH_CLASS = "max-w-[520px]";
 const BLUNDER_BOARD_WIDTH_CLASS = "max-w-[240px]";
-const NARRATION_TYPE_DELAY_MS = 38;
-const NARRATION_HIDE_DELAY_MS = 3000;
 const BOARD_SQUARES = Array.from({ length: 8 }, (_, rankOffset) =>
   Array.from({ length: 8 }, (_, fileOffset) => {
     const file = String.fromCharCode("a".charCodeAt(0) + fileOffset);
@@ -138,6 +142,53 @@ function getPosEvalPresentation(posEval?: string) {
     label: "Đánh giá vị trí",
     className: "border-slate-200 bg-slate-50 text-slate-700",
   };
+}
+
+function getMoveEvalPresentation(moveEval?: string) {
+  if (!moveEval) return null;
+
+  const normalized = moveEval.trim();
+
+  switch (normalized) {
+    case "!!":
+      return {
+        symbol: "!!",
+        label: "Rất hay",
+        className: "border-emerald-300 bg-emerald-500 text-white",
+      };
+    case "!":
+      return {
+        symbol: "!",
+        label: "Nước hay",
+        className: "border-emerald-200 bg-emerald-400 text-white",
+      };
+    case "!?":
+      return {
+        symbol: "!?",
+        label: "Khá hay",
+        className: "border-sky-200 bg-sky-500 text-white",
+      };
+    case "?!":
+      return {
+        symbol: "?!",
+        label: "Đáng nghi",
+        className: "border-amber-200 bg-amber-400 text-white",
+      };
+    case "??":
+      return {
+        symbol: "??",
+        label: "Sai nghiêm trọng",
+        className: "border-rose-300 bg-rose-600 text-white",
+      };
+    case "?":
+      return {
+        symbol: "?",
+        label: "Sai",
+        className: "border-rose-200 bg-rose-500 text-white",
+      };
+    default:
+      return null;
+  }
 }
 
 interface BlunderPreviewData {
@@ -308,7 +359,9 @@ function BlunderVariationBoard({
         </div>
 
         <div className="flex-1">
-          <p className="text-sm leading-relaxed text-rose-900">{preview.summary}</p>
+          <div className="text-sm leading-relaxed text-rose-900">
+            <RichChessText text={preview.summary} />
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             {preview.sequence.map((move, index) => (
               <div key={`${blunder.id}-${move}-${index}`} className="flex items-center gap-1.5">
@@ -341,6 +394,11 @@ function BlunderVariationBoard({
 export default function ChessBoardPractice({
   line,
   onComplete,
+  onProgressChange,
+  previewMove,
+  forkPreviewMoves = [],
+  segmentTitle,
+  nextSegmentTitle,
   onNextLine,
   onReplayLine,
   nextActionLabel = "Luyện tiếp",
@@ -389,6 +447,7 @@ export default function ChessBoardPractice({
       : [...plies.slice(0, currentPlyIndex)].reverse().find((move) => move.posEval)?.posEval) ??
     currentPly?.posEval;
   const posEvalPresentation = getPosEvalPresentation(currentPosEval);
+  const currentMoveEvalPresentation = getMoveEvalPresentation(currentPly?.moveEval);
   const activeStrategicMotif = [...(line.strategicMotifs ?? [])]
     .sort((a, b) => b.triggerPly - a.triggerPly)
     .find((motif) => completedPly >= motif.triggerPly);
@@ -436,9 +495,6 @@ export default function ChessBoardPractice({
       narrationHideTimerRef.current = null;
     }
 
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
   }, []);
 
   const resetBoard = useCallback(() => {
@@ -583,60 +639,11 @@ export default function ChessBoardPractice({
     clearNarration();
     const runId = narrationRunIdRef.current + 1;
     narrationRunIdRef.current = runId;
-    let typeDone = false;
-    let speechDone = false;
 
-    const finishNarrationIfReady = () => {
-      if (!typeDone || !speechDone || narrationRunIdRef.current !== runId) return;
-      narrationHideTimerRef.current = window.setTimeout(() => {
-        if (narrationRunIdRef.current !== runId) return;
-        setIsInstructionVisible(false);
-        setIsNarrationLocked(false);
-        if (isTextOnlySegment) {
-          setPhase("completed");
-          onTutorialComplete?.();
-        }
-      }, NARRATION_HIDE_DELAY_MS);
-    };
-
-    setInstructionText("");
+    setInstructionText(text);
     setInstructionFullText(text);
     setIsInstructionVisible(true);
     setIsNarrationLocked(true);
-
-    let index = 0;
-    typingTimerRef.current = window.setInterval(() => {
-      index += 1;
-      setInstructionText(text.slice(0, index));
-      if (index >= text.length) {
-        if (typingTimerRef.current) {
-          window.clearInterval(typingTimerRef.current);
-          typingTimerRef.current = null;
-        }
-        typeDone = true;
-        finishNarrationIfReady();
-      }
-    }, NARRATION_TYPE_DELAY_MS);
-
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "vi-VN";
-      utterance.rate = 0.84;
-      utterance.pitch = 1;
-      utterance.onend = () => {
-        speechDone = true;
-        finishNarrationIfReady();
-      };
-      utterance.onerror = () => {
-        speechDone = true;
-        finishNarrationIfReady();
-      };
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    } else {
-      speechDone = true;
-      finishNarrationIfReady();
-    }
 
     return () => {
       clearNarration();
@@ -901,6 +908,24 @@ export default function ChessBoardPractice({
         },
       ])
     ),
+    ...(previewMove?.from
+      ? {
+          [previewMove.from]: {
+            background:
+              "radial-gradient(circle, rgba(56,189,248,0.36) 0%, rgba(56,189,248,0.18) 38%, transparent 70%)",
+            boxShadow: "inset 0 0 0 2px rgba(14,165,233,0.65)",
+          },
+        }
+      : {}),
+    ...(previewMove?.to
+      ? {
+          [previewMove.to]: {
+            background:
+              "radial-gradient(circle, rgba(14,165,233,0.52) 0%, rgba(56,189,248,0.2) 38%, transparent 72%)",
+            boxShadow: "inset 0 0 0 2px rgba(2,132,199,0.75)",
+          },
+        }
+      : {}),
     ...(selectedSquare
       ? {
           [selectedSquare]: {
@@ -919,14 +944,53 @@ export default function ChessBoardPractice({
         },
       ])
     ),
+    ...Object.fromEntries(
+      forkPreviewMoves.map((fork) => [
+        fork.to,
+        {
+          background:
+            "radial-gradient(circle, rgba(245,158,11,0.34) 0%, rgba(245,158,11,0.12) 40%, transparent 72%)",
+          boxShadow: "inset 0 0 0 2px rgba(217,119,6,0.5)",
+        },
+      ])
+    ),
+    ...Object.fromEntries(
+      forkPreviewMoves.map((fork) => [
+        fork.from,
+        {
+          background:
+            "radial-gradient(circle, rgba(245,158,11,0.18) 0%, rgba(245,158,11,0.08) 40%, transparent 72%)",
+          boxShadow: "inset 0 0 0 1.5px rgba(217,119,6,0.4)",
+        },
+      ])
+    ),
   };
 
   const displayedArrows = dedupeArrows([...hoverArrows, ...arrow]);
+  const currentMoveOverlay =
+    currentPly && phase !== "completed"
+      ? gameRef.current.moves({ verbose: true }).find((move) => move.san === (currentPly.validMoves[0] ?? ""))
+      : null;
+  const previewArrows =
+    previewMove && previewMove.from && previewMove.to
+      ? [{ startSquare: previewMove.from, endSquare: previewMove.to, color: "#38bdf8" as const }]
+      : [];
+  const boardArrows = dedupeArrows([...displayedArrows, ...previewArrows]);
 
   // ─── Render ───────────────────────────────────────────────────────────────────
 
+  useEffect(() => {
+    const key =
+      phase === "completed"
+        ? null
+        : currentPly
+          ? `${currentPly.ply}-${currentPly.validMoves[0] ?? ""}`
+          : null;
+    onProgressChange?.({ currentMoveKey: key, fen, phase });
+  }, [currentPly, fen, onProgressChange, phase]);
+
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className="flex w-full flex-col items-start gap-4">
 
       {/* ── Board ── */}
       <div className={`w-full ${MAIN_BOARD_WIDTH_CLASS}`}>
@@ -962,29 +1026,51 @@ export default function ChessBoardPractice({
               </div>
             </div>
           )}
+          {forkPreviewMoves.map((fork) => {
+            const overlayStyle = getOverlayPosition(fork.to, boardOrientation);
+            return (
+              <div
+                key={`${fork.from}-${fork.to}-${fork.label}`}
+                className="pointer-events-none absolute z-10 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white shadow-sm"
+                style={overlayStyle}
+              >
+                {fork.label}
+              </div>
+            );
+          })}
+          {currentMoveEvalPresentation && currentMoveOverlay ? (
+            <div
+              className={`pointer-events-none absolute z-10 flex h-5 min-w-[1.25rem] -translate-y-1/2 translate-x-1/2 items-center justify-center rounded-full border px-1 text-[9px] font-black leading-none shadow-sm ${currentMoveEvalPresentation.className}`}
+              style={getOverlayPosition(currentMoveOverlay.to, boardOrientation)}
+              title={currentMoveEvalPresentation.label}
+            >
+              {currentMoveEvalPresentation.symbol}
+            </div>
+          ) : null}
           {isInstructionVisible && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-slate-950/45 px-5">
               <div className="pointer-events-auto max-w-[85%] rounded-3xl border border-white/15 bg-white/96 px-5 py-4 text-center shadow-2xl">
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleDismissInstruction}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
-                  >
-                    Close
-                  </button>
-                </div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-600">
                   {isTextOnlySegment
                     ? "Đang đọc nội dung"
                     : `${currentPly?.side === "w" ? "Lượt trắng" : "Lượt đen"} • nước ${currentPly?.ply}`}
                 </p>
-                <p className="mt-3 text-base font-medium leading-relaxed text-slate-900 min-h-[4.5rem]">
-                  {instructionText}
-                  <span className="inline-block h-5 w-[2px] animate-pulse bg-emerald-500 align-middle ml-0.5" />
-                </p>
+                <div className="mt-3 min-h-[4.5rem] text-base font-medium leading-relaxed text-slate-900">
+                  <RichChessText text={instructionText} />
+                </div>
                 <p className="mt-3 text-xs font-medium text-slate-500">
-                  Hãy đọc và nghe hết phần giải thích trước khi đi quân.
+                  {isTextOnlySegment
+                    ? "Đọc xong rồi thì sang phần kế tiếp."
+                    : "Đọc xong rồi bấm tiếp tục để tự đi nước này."}
                 </p>
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={handleDismissInstruction}
+                    className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700"
+                  >
+                    {isTextOnlySegment ? "Tiếp tục" : "Tôi đã hiểu, đi tiếp"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1004,7 +1090,7 @@ export default function ChessBoardPractice({
               !isNarrationLocked &&
               piece.pieceType.startsWith(learnerSide),
             squareStyles,
-            arrows: displayedArrows,
+            arrows: boardArrows,
             boardStyle: {
               borderRadius: "8px",
               boxShadow: "0 4px 24px rgba(0,0,0,0.25)",
@@ -1112,6 +1198,18 @@ export default function ChessBoardPractice({
 
       {/* ── Status bar ── */}
       <div className={`w-full ${MAIN_BOARD_WIDTH_CLASS}`}>
+        {forkPreviewMoves.length > 1 && segmentTitle && phase === "playing" && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/95 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+              Điểm Rẽ
+            </p>
+            <p className="mt-1 text-sm font-semibold text-amber-950">{segmentTitle}</p>
+            <p className="mt-1 text-sm text-amber-900">
+              Các số trên bàn cờ là những lựa chọn khác nhau tại đúng điểm rẽ này. Bài hiện tại đang đi theo nhánh <span className="font-semibold">{segmentTitle}</span>.
+            </p>
+          </div>
+        )}
+
         {/* Tutorial status */}
         {isTutorial && phase === "playing" && (
           <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
@@ -1142,8 +1240,12 @@ export default function ChessBoardPractice({
             {feedback && !mistakeMove && (
               <div className="mt-2 rounded-lg bg-white/80 px-3 py-3">
                 <p className="text-sm font-semibold text-sky-900">{feedback.title}</p>
-                <p className="mt-1 text-sm text-sky-800">{feedback.message}</p>
-                <p className="mt-1 text-sm text-sky-700">{feedback.detail}</p>
+                <div className="mt-1 text-sm text-sky-800">
+                  <RichChessText text={feedback.message} />
+                </div>
+                <div className="mt-1 text-sm text-sky-700">
+                  <RichChessText text={feedback.detail} />
+                </div>
               </div>
             )}
             {posEvalPresentation && (
@@ -1157,6 +1259,21 @@ export default function ChessBoardPractice({
                 <p className="mt-1 text-sm">
                   {posEvalPresentation.label}. Mốc này lấy trực tiếp từ `posEval` trong data bài học.
                 </p>
+              </div>
+            )}
+            {currentMoveEvalPresentation && (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-white/90 px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Đánh Giá Nước Đi
+                </p>
+                <div className="mt-1 flex items-center gap-2">
+                  <span
+                    className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-black ${currentMoveEvalPresentation.className}`}
+                  >
+                    {currentMoveEvalPresentation.symbol}
+                  </span>
+                  <span className="text-sm text-slate-700">{currentMoveEvalPresentation.label}</span>
+                </div>
               </div>
             )}
             {activeJourney && (
@@ -1205,10 +1322,16 @@ export default function ChessBoardPractice({
                 ? `🙂 Nước ${mistakeMove} cũng có ý, nhưng chưa khớp bài`
                 : `🌱 Nước ${mistakeMove} chưa đúng với line này`}
             </p>
-            <p className="text-rose-700 text-sm">{feedback.message}</p>
-            <p className="mt-2 text-sm text-rose-600">{feedback.detail}</p>
+            <div className="text-sm text-rose-700">
+              <RichChessText text={feedback.message} />
+            </div>
+            <div className="mt-2 text-sm text-rose-600">
+              <RichChessText text={feedback.detail} />
+            </div>
             {explanation && (
-              <p className="mt-2 text-sm text-rose-600">Gợi ý của bài: {explanation}</p>
+              <div className="mt-2 text-sm text-rose-600">
+                Gợi ý của bài: <RichChessText text={explanation} />
+              </div>
             )}
           </div>
         )}
@@ -1219,23 +1342,30 @@ export default function ChessBoardPractice({
             <p className="text-green-700 font-bold text-lg mb-1">
               {getRewardMessage(correctStreak)}
             </p>
-            {!hadMistake && (
-              <p className="text-green-600 text-sm mb-2">🌟 Hoàn hảo – không có sai lầm!</p>
-            )}
-            <p className="mt-2 text-sm text-green-600">Bé đã hoàn thành bài này rồi.</p>
+            <p className="mt-2 text-sm text-green-600">
+              {hadMistake
+                ? "Biến này vẫn chưa thật chắc. Nên đánh lại ngay một lượt nữa trước khi sang nhánh khác."
+                : nextSegmentTitle
+                  ? `Biến này đã khá ổn. Nếu muốn đi tiếp, nhánh kế là ${nextSegmentTitle}.`
+                  : "Biến này đã khá ổn. Bạn có thể sang phần tiếp theo, hoặc đánh lại thêm một lượt để nhớ tay hơn."}
+            </p>
             <div className="mt-3 flex flex-wrap justify-center gap-3">
               {onReplayLine && (
                 <button
                   onClick={onReplayLine}
-                  className="rounded-lg border border-green-300 bg-white px-4 py-2 text-sm font-medium text-green-700 transition-colors hover:bg-green-100"
+                  className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700"
                 >
                   {replayActionLabel}
                 </button>
               )}
-              {onNextLine && (
+              {onNextLine && (!hadMistake || !onReplayLine) && (
                 <button
                   onClick={onNextLine}
-                  className="bg-green-500 hover:bg-green-600 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                    onReplayLine
+                      ? "border border-green-300 bg-white text-green-700 hover:bg-green-100"
+                      : "bg-green-500 text-white hover:bg-green-600"
+                  }`}
                 >
                   {secondaryActionLabel ?? nextActionLabel}
                 </button>

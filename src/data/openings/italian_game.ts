@@ -11,11 +11,12 @@ import {
 } from "@/types";
 
 function toMoveNode(move: BookMove) {
+  const sanitizedMove = move.move.replace(/[!?]+/g, "");
   return {
     ply: move.ply,
     side: move.side,
-    move: move.move,
-    validMoves: [move.move],
+    move: sanitizedMove,
+    validMoves: [sanitizedMove],
     explain: move.explain,
     moveEval: move.moveEval,
     posEval: move.posEval,
@@ -57,6 +58,105 @@ function buildOutcomeSummary(moves: BookMove[], texts: string[], fallback: strin
   return buildEvalSummary(moves[moves.length - 1]?.posEval) ?? fallback;
 }
 
+const SAN_PIECE_GLYPHS: Record<string, string> = {
+  K: "♔",
+  Q: "♕",
+  R: "♖",
+  B: "♗",
+  N: "♘",
+};
+
+const PIECE_NAME_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bVua Đen\b/g, "♚"],
+  [/\bVua Trắng\b/g, "♔"],
+  [/\bHậu Đen\b/g, "♛"],
+  [/\bHậu Trắng\b/g, "♕"],
+  [/\bXe Đen\b/g, "♜"],
+  [/\bXe Trắng\b/g, "♖"],
+  [/\bTượng Đen\b/g, "♝"],
+  [/\bTượng Trắng\b/g, "♗"],
+  [/\bMã Đen\b/g, "♞"],
+  [/\bMã Trắng\b/g, "♘"],
+  [/\bTốt Đen\b/g, "♟"],
+  [/\bTốt Trắng\b/g, "♙"],
+  [/\bVua\b/g, "♔"],
+  [/\bHậu\b/g, "♕"],
+  [/\bXe\b/g, "♖"],
+  [/\bTượng\b/g, "♗"],
+  [/\bMã\b/g, "♘"],
+  [/\bTốt\b/g, "♙"],
+];
+
+function formatChessText(text: string): string {
+  let formatted = text;
+
+  for (const [pattern, replacement] of PIECE_NAME_REPLACEMENTS) {
+    formatted = formatted.replace(pattern, replacement);
+  }
+
+  formatted = formatted.replace(/\b([KQRBN])(?=[a-hx1-8])/g, (_, piece: string) => {
+    return SAN_PIECE_GLYPHS[piece] ?? piece;
+  });
+
+  formatted = formatted.replace(/=([QRBN])/g, (_, piece: string) => {
+    return `=${SAN_PIECE_GLYPHS[piece] ?? piece}`;
+  });
+
+  const evalSymbolReplacements: Array<[RegExp, string]> = [
+    [/\+\-/g, "+- (Trắng thắng rõ)"],
+    [/\±/g, "± (Trắng ưu thế)"],
+    [/\+\=/g, "+= (Trắng dễ chơi hơn)"],
+    [/\∓/g, "∓ (Đen ưu thế)"],
+    [/\!\!/g, "!! (rất mạnh)"],
+    [/\?\?/g, "?? (sai lầm nặng)"],
+    [/\!\?/g, "!? (đáng chú ý)"],
+    [/\?\!/g, "?! (đáng ngờ)"],
+  ];
+
+  for (const [pattern, replacement] of evalSymbolReplacements) {
+    formatted = formatted.replace(pattern, replacement);
+  }
+
+  formatted = formatted.replace(
+    /((?:\d+\.(?:\.\.)?)?(?:O-O(?:-O)?|[♔♕♖♗♘KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[♔♕♖♗♘KQRBN])?[+#]?))([!?])(?![!?])/g,
+    (_, move: string, annotation: string) => {
+      if (annotation === "!") {
+        return `${move}! (mạnh)`;
+      }
+
+      return `${move}? (yếu)`;
+    }
+  );
+
+  return formatted;
+}
+
+function formatBookContentNodes(nodes: BookContentNode[]): BookContentNode[] {
+  return nodes.map((node) => {
+    if (node.type === "text") {
+      return { ...node, content: formatChessText(node.content) };
+    }
+
+    if (node.type === "variation_group") {
+      return {
+        ...node,
+        title: formatChessText(node.title),
+        flow: formatBookContentNodes(node.flow),
+      };
+    }
+
+    if (node.type === "variation") {
+      return {
+        ...node,
+        title: formatChessText(node.title),
+        flow: formatBookContentNodes(node.flow),
+      };
+    }
+
+    return node;
+  });
+}
+
 interface ParsedFlow {
   moves: BookMove[];
   texts: string[];
@@ -79,7 +179,7 @@ function parseFlow(nodes: BookContentNode[], startPly: number): ParsedFlow {
       moves.push({
         ply: currentPly,
         side: node.side,
-        move: node.notation,
+        move: node.notation.replace(/[!?]+/g, ""),
         moveEval: node.moveEval,
         posEval: node.posEval,
       });
@@ -155,12 +255,13 @@ function parseVariationGroup(node: BookFlowVariationGroupNode, startPly: number)
 }
 
 function chapterToOpeningLine(book: OpeningBook, chapter: BookChapter, chapterIndex: number): OpeningLine {
+  const formattedContent = formatBookContentNodes(chapter.content);
   const rootMoves: BookMove[] = [];
   const introTexts: string[] = [];
   const variationGroups: VariationGroup[] = [];
   let currentPly = 1;
 
-  chapter.content.forEach((node) => {
+  formattedContent.forEach((node) => {
     if (node.type === "text") {
       introTexts.push(node.content.trim());
       return;
@@ -170,7 +271,7 @@ function chapterToOpeningLine(book: OpeningBook, chapter: BookChapter, chapterIn
       rootMoves.push({
         ply: currentPly,
         side: node.side,
-        move: node.notation,
+        move: node.notation.replace(/[!?]+/g, ""),
         moveEval: node.moveEval,
         posEval: node.posEval,
       });
@@ -192,15 +293,15 @@ function chapterToOpeningLine(book: OpeningBook, chapter: BookChapter, chapterIn
     opening: chapter.opening,
     fenStart: chapter.fenStart,
     preferredLearnerSide: "w",
-    bookContent: chapter.content,
+    bookContent: formattedContent,
     moves: lineMoves.map(toMoveNode),
     guide: {
-      title: chapter.name,
-      summary: chapter.summary || introTexts.join(" "),
+      title: formatChessText(chapter.name),
+      summary: formatChessText(chapter.summary || introTexts.join(" ")),
     },
     outcome: {
       type: "advantage",
-      summary: chapter.summary || introTexts.join(" "),
+      summary: formatChessText(chapter.summary || introTexts.join(" ")),
     },
     variationGroups,
     difficulty: 2,
@@ -213,10 +314,10 @@ function chapterToOpeningLine(book: OpeningBook, chapter: BookChapter, chapterIn
         {
           bookId: book.id,
           title: book.title,
-          note: chapter.name,
+          note: formatChessText(chapter.name),
         },
       ],
-      summary: chapter.summary || introTexts.join(" "),
+      summary: formatChessText(chapter.summary || introTexts.join(" ")),
     },
     bookId: book.id,
     bookTitle: book.title,
@@ -236,11 +337,15 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
       opening: "Italian Game",
       fenStart: "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
       summary:
-        "Chương 1 tổng hợp các biến thể phụ của Đen sau 1.e4 e5 2.Nf3 Nc6 3.Bc4. Khi Đen chậm phát triển hoặc đi những nước nghi ngờ, Trắng nên phản ứng tự nhiên, chiếm trung tâm.",
+        "Chương 1 gom các lựa chọn phụ của Đen sau 1.e4 e5 2.♘f3 ♘c6 3.♗c4. Khi Đen chậm phát triển, Trắng nên chiếm trung tâm và lấy thế chủ động.",
       content: [
         {
           type: "text",
-          content: "Trong chương đầu tiên, chúng ta sẽ xem xét tất cả các nước đi hợp lý ở mức độ nhất định ngoài 3...Bc5 và 3...Nf6. Ba trong số đó – 3...f5?!, 3...Nd4?! và 3...h6?! – là đáng nghi (dubious) vì Đen bỏ qua việc phát triển quân. Trắng giành lợi thế bằng những nước đi tự nhiên. Sau 3...d6 và 3...Be7, Trắng có thể chuyển về Chương 3, nhưng chúng tôi cũng cung cấp một khả năng độc lập hứa hẹn lợi thế cho Trắng. 3...g6 là một nỗ lực thú vị để tránh các lộ trình lý thuyết cao. Kế hoạch của Đen hơi chậm, vì vậy Trắng phải chơi mạnh mẽ ở trung tâm. Với việc sẵn sàng hy sinh một tốt, Trắng giành quyền chủ động và có thế trận tốt hơn sau khai cuộc."
+          content: "Chương này bỏ qua hai nhánh chính 3...♗c5 và 3...♘f6 để tập trung vào các lựa chọn phụ của Đen. Những nước như 3...f5?!, 3...♘d4?! và 3...h6?! đều khá đáng nghi vì Đen chậm phát triển."
+        },
+        {
+          type: "text",
+          content: "Kế hoạch chung của Trắng rất đơn giản: phát triển tự nhiên, chiếm trung tâm và tận dụng những nhịp chậm của Đen. Với 3...d6, 3...♗e7 và 3...g6, Trắng vẫn có thể giữ thế chủ động nếu đi chính xác."
         },
         { type: "move", notation: "e4", side: "w" },
         { type: "move", notation: "e5", side: "b" },
@@ -615,10 +720,9 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
               id: "C_9e6",
               title: "9.e6!?",
               flow: [
+                { type: "move", notation: "bxc6", side: "b" },
                 { type: "move", notation: "e6", side: "w", moveEval: "!?" },
                 { type: "move", notation: "fxe6", side: "b" },
-                { type: "move", notation: "Bxc6", side: "w" },
-                { type: "move", notation: "bxc6", side: "b" },
                 { type: "move", notation: "Qh5+", side: "w" },
                 { type: "move", notation: "Ke7", side: "b" },
                 { type: "move", notation: "Nd2", side: "w" },
@@ -661,7 +765,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
               ]
             },
             { type: "move", notation: "c5", side: "b" },
-            { type: "move", notation: "Ne2", side: "w" },
+            { type: "move", notation: "Nde2", side: "w" },
             { type: "move", notation: "Nxc3", side: "b" },
             { type: "move", notation: "bxc3!", side: "w", moveEval: "!" },
             { type: "text", content: "Trắng đe dọa tấn công cánh Vua bằng f4-f5." }
@@ -729,7 +833,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "move", notation: "Nxe5", side: "b" },
                     { type: "move", notation: "b4", side: "w" },
                     { type: "move", notation: "Bxb4", side: "b" },
-                    { type: "move", notation: "Rxb4", side: "w" },
+                    { type: "move", notation: "Rexb4", side: "w" },
                     { type: "move", notation: "Ng6", side: "b" },
                     { type: "move", notation: "Ba3", side: "w" },
                     { type: "move", notation: "Qa6", side: "b" },
@@ -748,6 +852,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
               title: "D1) 4...Nf6?!",
               flow: [
                 { type: "move", notation: "Nf6", side: "b", moveEval: "?!" },
+                { type: "move", notation: "Ng5!", side: "w", moveEval: "!" },
                 {
                   type: "variation",
                   id: "D1_5Be6",
@@ -759,7 +864,6 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "move", notation: "Qb3!", side: "w", moveEval: "!", posEval: "±" }
                   ]
                 },
-                { type: "move", notation: "Ng5!", side: "w", moveEval: "!" },
                 { type: "move", notation: "d5", side: "b" },
                 { type: "move", notation: "exd5", side: "w" },
                 { type: "text", content: "Đây là thế trận quen thuộc sau 3.Bc4 Nf6 4.Ng5 d5. Ở đây Trắng có thêm nhịp vì Đen đã đi d7-d6 rồi mới d6-d5." },
@@ -783,7 +887,6 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
               flow: [
                 { type: "move", notation: "Be7", side: "b" },
                 { type: "move", notation: "Qb3!", side: "w", moveEval: "!" },
-                { type: "move", notation: "Nh6", side: "b" },
                 {
                   type: "variation",
                   id: "D2_5Na5",
@@ -798,8 +901,8 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "text", content: "Trắng hơn hẳn một tốt." }
                   ]
                 },
+                { type: "move", notation: "Nh6", side: "b" },
                 { type: "move", notation: "d4", side: "w" },
-                { type: "move", notation: "O-O", side: "b" },
                 {
                   type: "variation",
                   id: "D2_6Na5",
@@ -811,30 +914,10 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "move", notation: "Be2", side: "w", posEval: "±" }
                   ]
                 },
+                { type: "move", notation: "O-O", side: "b" },
                 { type: "move", notation: "Bxh6", side: "w" },
                 { type: "move", notation: "gxh6", side: "b" },
-                { type: "text", content: "Trắng có cấu trúc tốt hơn và ưu thế nhỏ. Ví dụ ván Mujunen-Zhuravlev, ICCF email 2014." },
-                { type: "move", notation: "O-O", side: "w" },
-                { type: "move", notation: "Na5", side: "b" },
-                { type: "move", notation: "Qa4", side: "w" },
-                { type: "move", notation: "Nxc4", side: "b" },
-                { type: "move", notation: "Qxc4", side: "w" },
-                { type: "move", notation: "Bg4", side: "b" },
-                { type: "move", notation: "Nbd2", side: "w" },
-                { type: "move", notation: "Bg5", side: "b" },
-                { type: "move", notation: "Re1", side: "w" },
-                { type: "move", notation: "c5", side: "b" },
-                { type: "move", notation: "Qd3", side: "w" },
-                { type: "move", notation: "Rc8", side: "b" },
-                { type: "move", notation: "Nxg5", side: "w" },
-                { type: "move", notation: "hxg5", side: "b" },
-                { type: "move", notation: "Nf1", side: "w" },
-                { type: "move", notation: "exd4", side: "b" },
-                { type: "move", notation: "cxd4", side: "w" },
-                { type: "move", notation: "Qf6", side: "b" },
-                { type: "move", notation: "Qg3", side: "w" },
-                { type: "move", notation: "Qf4", side: "b" },
-                { type: "move", notation: "Ne3", side: "w", posEval: "±" }
+                { type: "text", content: "Trắng có cấu trúc tốt hơn và ưu thế nhỏ. Ví dụ ván Mujunen-Zhuravlev, ICCF email 2014." }
               ]
             },
             {
@@ -846,7 +929,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                 { type: "move", notation: "d4", side: "w" },
                 { type: "move", notation: "Bxf3", side: "b" },
                 { type: "move", notation: "Qxf3", side: "w" },
-                { type: "move", notation: "f6", side: "b" },
+                { type: "move", notation: "Qf6", side: "b" },
                 { type: "move", notation: "Be3", side: "w" },
                 { type: "move", notation: "Qxf3", side: "b" },
                 { type: "move", notation: "gxf3", side: "w", posEval: "±" }
@@ -862,6 +945,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                 { type: "move", notation: "Nf6", side: "b" },
                 { type: "move", notation: "d4", side: "w" },
                 { type: "move", notation: "Be7", side: "b" },
+                { type: "move", notation: "Re1", side: "w" },
                 {
                   type: "variation",
                   id: "D4_6Nxe4",
@@ -869,23 +953,17 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                   flow: [
                     { type: "move", notation: "Nxe4", side: "b" },
                     { type: "move", notation: "dxe5", side: "w" },
-                    {
-                      type: "variation",
-                      id: "D4_7Be7",
-                      title: "7...Be7",
-                      flow: [
-                        { type: "move", notation: "Be7", side: "b" },
-                        { type: "move", notation: "Re1", side: "w" },
-                        { type: "move", notation: "Bf5", side: "b" },
-                        { type: "move", notation: "Nd4!", side: "w", moveEval: "!" },
-                        { type: "move", notation: "cxd4", side: "w", posEval: "±" },
-                        { type: "text", content: "Ván Zelcic-Krnic, Zadar 1994." }
-                      ]
-                    },
-                    { type: "move", notation: "Be6?!", side: "b", moveEval: "?!" }
+                    { type: "move", notation: "Be6?!", side: "b", moveEval: "?!" },
+                    { type: "move", notation: "Bxe6", side: "w" },
+                    { type: "move", notation: "fxe6", side: "b" },
+                    { type: "move", notation: "Nd4!", side: "w", moveEval: "!" },
+                    { type: "move", notation: "Nxd4", side: "b" },
+                    { type: "move", notation: "Qh5+", side: "w" },
+                    { type: "move", notation: "Kd7", side: "b" },
+                    { type: "move", notation: "cxd4", side: "w", posEval: "±" },
+                    { type: "text", content: "Ván Zelcic-Krnic, Zadar 1994." }
                   ]
                 },
-                { type: "move", notation: "Re1", side: "w" },
                 { type: "move", notation: "O-O", side: "b" },
                 { type: "move", notation: "h3", side: "w" }
               ]
@@ -906,7 +984,6 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
               title: "Biến 4.O-O",
               flow: [
                 { type: "move", notation: "O-O", side: "w" },
-                { type: "move", notation: "Nf6", side: "b" },
                 {
                   type: "variation",
                   id: "E_4d6",
@@ -920,6 +997,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "move", notation: "Re1", side: "w" }
                   ]
                 },
+                { type: "move", notation: "Nf6", side: "b" },
                 { type: "move", notation: "d3", side: "w" },
                 { type: "move", notation: "O-O", side: "b" },
                 { type: "move", notation: "Re1", side: "w" },
@@ -1084,7 +1162,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                       title: "11...O-O",
                       flow: [
                         { type: "move", notation: "O-O", side: "b" },
-                        { type: "move", notation: "Bxh6", side: "w" },
+                        { type: "move", notation: "Bh6", side: "w" },
                         { type: "move", notation: "g6", side: "b" },
                         { type: "move", notation: "Bxf8", side: "w", posEval: "+-" }
                       ]
@@ -1153,7 +1231,6 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                 },
                 { type: "move", notation: "Qxd7", side: "b" },
                 { type: "move", notation: "Rd1", side: "w" },
-                { type: "move", notation: "Qc8", side: "b" },
                 {
                   type: "variation",
                   id: "E5_13Bd6",
@@ -1167,6 +1244,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "move", notation: "Qh4", side: "w", posEval: "±" }
                   ]
                 },
+                { type: "move", notation: "Qc8", side: "b" },
                 { type: "move", notation: "Bf4", side: "w", posEval: "±" }
               ]
             }
@@ -1218,32 +1296,48 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                 { type: "move", notation: "Bg7", side: "b" },
                 { type: "move", notation: "cxd4", side: "w" },
                 { type: "text", content: "Thế trận này hứa hẹn ưu thế cho Trắng nhờ khả năng kiểm soát trung tâm tốt hơn." },
-                { type: "move", notation: "d6", side: "b" },
                 {
                   type: "variation",
-                  id: "g6_A_6Ne7",
-                  title: "6...Ne7",
+                  id: "g6_A_6Nge7",
+                  title: "6...Nge7",
                   flow: [
-                    { type: "move", notation: "Ne7", side: "b" },
+                    { type: "move", notation: "Nge7", side: "b" },
                     { type: "text", content: "(Ván Lapshun-Guramishvili, Banyoles 2007)" },
                     { type: "move", notation: "d5!", side: "w", moveEval: "!" },
-                    { type: "move", notation: "Na5", side: "b" },
                     {
                       type: "variation",
                       id: "g6_A_7Nb8",
                       title: "7...Nb8?!",
                       flow: [
                         { type: "move", notation: "Nb8", side: "b", moveEval: "?!" },
-                        { type: "move", notation: "d6!", side: "w", moveEval: "!" }
+                        { type: "move", notation: "d6!", side: "w", moveEval: "!", posEval: "±" }
                       ]
                     },
+                    {
+                      type: "variation",
+                      id: "g6_A_7Ne5",
+                      title: "7...Ne5",
+                      flow: [
+                        { type: "move", notation: "Ne5", side: "b" },
+                        { type: "move", notation: "Nxe5", side: "w" },
+                        { type: "move", notation: "Bxe5", side: "b" },
+                        { type: "move", notation: "O-O", side: "w" },
+                        { type: "move", notation: "d6", side: "b" },
+                        { type: "move", notation: "Nc3", side: "w" },
+                        { type: "move", notation: "O-O", side: "b" },
+                        { type: "move", notation: "Bg5", side: "w", posEval: "±" }
+                      ]
+                    },
+                    { type: "move", notation: "Na5", side: "b" },
                     { type: "move", notation: "Be2", side: "w" },
                     { type: "move", notation: "O-O", side: "b" },
                     { type: "move", notation: "O-O", side: "w" },
                     { type: "move", notation: "d6", side: "b" },
-                    { type: "move", notation: "Nc3", side: "w" }
+                    { type: "move", notation: "Nc3", side: "w", posEval: "±" }
                   ]
                 },
+                { type: "move", notation: "d6", side: "b" },
+                { type: "text", content: "Tại đây Trắng có thể chọn nhiều cách khác nhau để giành ưu thế." },
                 {
                   type: "variation",
                   id: "g6_A1",
@@ -1253,7 +1347,6 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                     { type: "move", notation: "Qd7", side: "b" },
                     { type: "text", content: "(Ván Flores-Pina Gomez, Villa Ballester 2004)" },
                     { type: "move", notation: "Bd2!", side: "w", moveEval: "!" },
-                    { type: "move", notation: "a6", side: "b" },
                     {
                       type: "variation",
                       id: "g6_A1_8Nxd4",
@@ -1271,6 +1364,7 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                         { type: "move", notation: "Nc3", side: "w" }
                       ]
                     },
+                    { type: "move", notation: "a6", side: "b" },
                     { type: "move", notation: "d5", side: "w" },
                     { type: "move", notation: "Ne5", side: "b" },
                     { type: "move", notation: "Nxe5", side: "w" },
@@ -1294,13 +1388,13 @@ export const winningWithTheSlowButVenomousItalian: OpeningBook = {
                   title: "A2) 7.d5",
                   flow: [
                     { type: "move", notation: "d5", side: "w" },
-                    { type: "move", notation: "Ne7", side: "b" },
+                    { type: "move", notation: "Nce7", side: "b" },
                     { type: "text", content: "(Ván Ptacnikova-Hj.Gretarsson, Reykjavik 2015)" },
                     { type: "move", notation: "O-O!", side: "w", moveEval: "!" },
                     { type: "move", notation: "Nf6", side: "b" },
                     { type: "move", notation: "Nc3", side: "w" },
                     { type: "move", notation: "O-O", side: "b" },
-                    { type: "move", notation: "Bf4", side: "w" }
+                    { type: "move", notation: "Bf4", side: "w", posEval: "±" }
                   ]
                 },
                 {

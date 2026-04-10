@@ -56,9 +56,9 @@ export function getMistakeLabel(type: MistakeType): string {
 
 /** Return an encouraging message when the line is completed correctly. */
 export function getRewardMessage(correctStreak: number): string {
-  if (correctStreak >= 5) return "🔥 Xuất sắc! Bạn đang vào guồng!";
-  if (correctStreak >= 3) return "⭐ Tuyệt vời! Tiếp tục phát huy!";
-  return "✅ Đúng rồi! Tiếp tục nào!";
+  if (correctStreak >= 5) return "Nhớ khá chắc rồi. Mình giữ nhịp này nhé.";
+  if (correctStreak >= 3) return "Đúng rồi. Nhịp học đang rất ổn.";
+  return "Đúng rồi. Mình đi tiếp.";
 }
 
 function formatExpectedMoves(validMoves: string[]): string {
