@@ -1,0 +1,2963 @@
+Reading additional input from stdin...
+OpenAI Codex v0.118.0 (research preview)
+--------
+workdir: /Users/haile/Documents/github/ChessLearning
+model: gpt-5.4
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /Users/haile/.codex/memories]
+reasoning effort: medium
+reasoning summaries: none
+session id: 019d77e2-8413-7640-b807-72670b96d31d
+--------
+user
+tôi muốn upload project lên github pages để deploy trang web này trên github pages để tôi có thể chơi trên đó.
+Hãy giúp tôi setup môi trường các thứ để khi tôi push code thì tự động deploy
+codex
+Tôi sẽ kiểm tra cấu trúc project, cách build hiện tại và xem repo này đã sẵn sàng cho GitHub Pages chưa. Sau đó tôi sẽ thêm cấu hình để mỗi lần `push` lên nhánh chính thì GitHub Actions tự build và deploy.
+exec
+/bin/zsh -lc pwd in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+/Users/haile/Documents/github/ChessLearning
+
+exec
+/bin/zsh -lc 'git status --short' in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+A  .discord-runtime/logs/codex-1775831553063.log
+A  .discord-runtime/tasks/task-1775831553059.md
+A  .discord-runtime/tasks/task-1775831553059.reply.txt
+A  .env.discord.local
+A  docs/discord-mobile-control.md
+M  package-lock.json
+M  package.json
+A  scripts/discord-codex-bot.mjs
+?? .discord-runtime/logs/codex-1775832825800.log
+?? .discord-runtime/tasks/task-1775832825796.md
+
+exec
+/bin/zsh -lc 'rg --files' in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+src/data/openings/italian_game.ts
+src/data/books/winning-with-the-slow-but-venomous-italian-chapter-1.pdf
+src/data/books/winning-with-the-slow-but-venomous-italian-9789056916749_compress.pdf
+src/lib/spacedRepetition.ts
+src/lib/lessonFlow.ts
+src/lib/contentSelection.ts
+src/lib/explanationEngine.ts
+src/lib/moveValidation.ts
+src/lib/openingGuide.ts
+src/lib/progressTracker.ts
+src/components/XPBar.tsx
+src/components/ProgressList.tsx
+src/components/BranchExplorer.tsx
+src/components/RichChessText.tsx
+src/components/ChessBoardPractice.tsx
+src/components/DailyGoalCard.tsx
+src/app/globals.css
+src/app/page.tsx
+src/app/practice/page.tsx
+src/app/api/attempt/route.ts
+src/app/api/lesson/next/route.ts
+src/app/api/progress/route.ts
+src/app/layout.tsx
+src/app/progress/page.tsx
+src/app/favicon.ico
+src/types/index.ts
+next.config.ts
+eslint.config.mjs
+tsconfig.json
+scripts/discord-codex-bot.mjs
+scripts/validate-italian-book.mjs
+scripts/read-pdf.swift
+scripts/read-pdf.mjs
+scripts/compare-italian-book-to-pdf.mjs
+package.json
+package-lock.json
+public/window.svg
+public/globe.svg
+public/next.svg
+public/vercel.svg
+public/file.svg
+README.md
+docs/discord-mobile-control.md
+postcss.config.mjs
+
+codex
+Tôi đã thấy đây là một app Next.js và repo đang có thay đổi dở dang không liên quan, nên tôi sẽ tránh đụng vào các file đó ngoài phần cần thiết. Bước tiếp theo là kiểm tra `next.config`, `package.json` và các API route vì GitHub Pages chỉ host static site, không chạy được server-side route của Next.
+import { NextRequest, NextResponse } from "next/server";
+import italianGameLines from "@/data/openings/italian_game";
+import { selectNextLine } from "@/lib/contentSelection";
+import { UserProgress } from "@/types";
+
+/**
+ * GET /api/lesson/next
+ * Query params:
+ *   - progress: JSON-encoded Record<string, UserProgress>
+ */
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const progressParam = url.searchParams.get("progress");
+
+  let progressMap: Record<string, UserProgress> = {};
+  if (progressParam) {
+    try {
+      progressMap = JSON.parse(progressParam);
+    } catch {
+      // ignore malformed progress
+    }
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const next = selectNextLine(italianGameLines, progressMap, now);
+
+  if (!next) {
+    return NextResponse.json({ line: null }, { status: 200 });
+  }
+
+  return NextResponse.json({ line: next.line, isNew: next.isNew });
+}
+
+exec
+/bin/zsh -lc "sed -n '1,220p' next.config.ts" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+import { NextRequest, NextResponse } from "next/server";
+import { AttemptLog, UserProgress } from "@/types";
+import { updateProgress } from "@/lib/spacedRepetition";
+
+const XP_CORRECT = 10;
+const XP_MISTAKE = 2;
+const XP_PERFECT = 20;
+
+/**
+ * POST /api/attempt
+ * Body: { lineId, userId, moves, existingProgress? }
+ * Returns: { progress, xpEarned }
+ */
+export async function POST(req: NextRequest) {
+  let body: {
+    lineId: string;
+    userId?: string;
+    moves: AttemptLog["moves"];
+    existingProgress?: UserProgress | null;
+  };
+
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+
+  if (!lineId || !Array.isArray(moves)) {
+    return NextResponse.json(
+      { error: "lineId and moves are required" },
+      { status: 400 }
+    );
+  }
+
+  const hasMistakes = moves.some((m) => !m.isCorrect);
+  const wasCorrect = !hasMistakes;
+  const wasPerfect = wasCorrect && moves.length > 0;
+
+  const now = Math.floor(Date.now() / 1000);
+  const progress = updateProgress(
+    existingProgress,
+    lineId,
+    userId,
+    wasCorrect,
+    now
+  );
+
+  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+
+  const attempt: AttemptLog = {
+    userId,
+    lineId,
+    timestamp: now,
+    moves,
+  };
+
+  return NextResponse.json({ progress, xpEarned, attempt });
+}
+
+ succeeded in 0ms:
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+
+exec
+/bin/zsh -lc "sed -n '1,220p' package.json" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+{
+  "name": "chess-learning",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "discord:bot": "node scripts/discord-codex-bot.mjs",
+    "validate:italian-book": "node scripts/validate-italian-book.mjs",
+    "pdf:read": "node scripts/read-pdf.mjs",
+    "compare:italian-book": "node scripts/compare-italian-book-to-pdf.mjs"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "discord.js": "^14.25.1",
+    "next": "16.2.1",
+    "react": "19.2.4",
+    "react-chessboard": "^5.10.0",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+
+exec
+/bin/zsh -lc "sed -n '1,220p' src/app/api/lesson/next/route.ts" in /Users/haile/Documents/github/ChessLearning
+exec
+/bin/zsh -lc "sed -n '1,220p' src/app/api/attempt/route.ts" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+exec
+/bin/zsh -lc "sed -n '1,220p' src/app/api/progress/route.ts" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+import { NextRequest, NextResponse } from "next/server";
+import italianGameLines from "@/data/openings/italian_game";
+import { UserProgress } from "@/types";
+
+/**
+ * GET /api/progress
+ * Query params:
+ *   - progress: JSON-encoded Record<string, UserProgress>
+ * Returns summary stats.
+ */
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const progressParam = url.searchParams.get("progress");
+
+  let progressMap: Record<string, UserProgress> = {};
+  if (progressParam) {
+    try {
+      progressMap = JSON.parse(progressParam);
+    } catch {
+      // ignore
+    }
+  }
+
+  const totalLines = italianGameLines.length;
+  const seenLines = Object.keys(progressMap).length;
+  const masteredLines = Object.values(progressMap).filter(
+    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+  ).length;
+
+  const lines = italianGameLines.map((line) => ({
+    id: line.id,
+    name: line.name,
+    trap: line.trap,
+    difficulty: line.difficulty,
+    progress: progressMap[line.id] ?? null,
+  }));
+
+  return NextResponse.json({
+    totalLines,
+    seenLines,
+    masteredLines,
+    lines,
+  });
+}
+
+codex
+Có API route trong `src/app/api`, nghĩa là nếu giữ nguyên thì GitHub Pages sẽ không chạy được. Tôi đang rà xem phần frontend đang gọi các route này ở đâu để chuyển toàn bộ logic sang client-side/static.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/app/page.tsx" in /Users/haile/Documents/github/ChessLearning
+exec
+/bin/zsh -lc "sed -n '1,260p' src/app/progress/page.tsx" in /Users/haile/Documents/github/ChessLearning
+exec
+/bin/zsh -lc "sed -n '1,260p' src/app/practice/page.tsx" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+"use client";
+
+import { useEffect, useState, startTransition } from "react";
+import ProgressList from "@/components/ProgressList";
+import { loadProgressMap, loadUserStats } from "@/lib/progressTracker";
+import { UserProgress, UserStats } from "@/types";
+import XPBar from "@/components/XPBar";
+import italianGameLines from "@/data/openings/italian_game";
+
+export default function ProgressPage() {
+  const [progressMap, setProgressMap] = useState<Record<string, UserProgress>>({});
+  const [stats, setStats] = useState<UserStats>({ totalXP: 0, level: 0, dailyStreak: 0 });
+
+  useEffect(() => {
+    startTransition(() => {
+      setProgressMap(loadProgressMap());
+      setStats(loadUserStats());
+    });
+  }, []);
+
+  const seen = Object.keys(progressMap).length;
+  const mastered = Object.values(progressMap).filter(
+    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+  ).length;
+  const total = italianGameLines.length;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <h1 className="text-2xl font-bold text-gray-900">📊 Tiến độ học tập</h1>
+
+      {/* Summary stats */}
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
+          <div className="text-2xl font-bold text-blue-600">{seen}</div>
+          <div className="text-xs text-gray-500 mt-1">Đã học</div>
+        </div>
+        <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
+          <div className="text-2xl font-bold text-green-600">{mastered}</div>
+          <div className="text-xs text-gray-500 mt-1">Thành thạo</div>
+        </div>
+        <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
+          <div className="text-2xl font-bold text-gray-600">{total}</div>
+          <div className="text-xs text-gray-500 mt-1">Tổng bài</div>
+        </div>
+      </div>
+
+      {/* XP Bar */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <XPBar stats={stats} />
+      </div>
+
+      {/* Line list */}
+      <div>
+        <h2 className="text-sm font-semibold uppercase text-gray-500 tracking-wide mb-3">
+          Danh sách khai cuộc
+        </h2>
+        <ProgressList progressMap={progressMap} />
+      </div>
+    </div>
+  );
+}
+
+ succeeded in 0ms:
+"use client";
+
+import { useEffect, useMemo, useState, startTransition } from "react";
+import Link from "next/link";
+import italianGameLines from "@/data/openings/italian_game";
+import { sortLinesByRecommendation } from "@/lib/contentSelection";
+import {
+  loadPlayerGoal,
+  loadProgressMap,
+  savePlayerGoal,
+} from "@/lib/progressTracker";
+import { OpeningLine, UserProgress } from "@/types";
+
+function getLineProgress(progress?: UserProgress) {
+  if (!progress) {
+    return {
+      label: "Chưa học",
+      tone: "bg-slate-100 text-slate-600",
+      mastery: 0,
+    };
+  }
+
+  if (progress.successRate >= 0.8 && progress.correctStreak >= 3) {
+    return {
+      label: "Đã vững",
+      tone: "bg-green-100 text-green-700",
+      mastery: 100,
+    };
+  }
+
+  if (progress.successRate >= 0.5) {
+    return {
+      label: "Đang nhớ dần",
+      tone: "bg-amber-100 text-amber-700",
+      mastery: Math.round(progress.successRate * 100),
+    };
+  }
+
+  return {
+    label: "Đang học",
+    tone: "bg-rose-100 text-rose-700",
+    mastery: Math.round(progress.successRate * 100),
+  };
+}
+
+function getFamilySummary(lines: OpeningLine[], progressMap: Record<string, UserProgress>) {
+  const learned = lines.filter((line) => progressMap[line.id]).length;
+  const mastered = lines.filter((line) => {
+    const progress = progressMap[line.id];
+    return progress && progress.successRate >= 0.8 && progress.correctStreak >= 3;
+  }).length;
+
+  return { learned, mastered, total: lines.length };
+}
+
+export default function HomePage() {
+  const [progressMap, setProgressMap] = useState<Record<string, UserProgress>>({});
+  const [goalDraft, setGoalDraft] = useState("");
+  const [goalSaved, setGoalSaved] = useState(false);
+  const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({
+    "Italian Game": true,
+  });
+
+  useEffect(() => {
+    startTransition(() => {
+      setProgressMap(loadProgressMap());
+      setGoalDraft(loadPlayerGoal());
+    });
+  }, []);
+
+  const rankedLines = useMemo(() => sortLinesByRecommendation(italianGameLines), []);
+  const rankingMap = useMemo(
+    () => new Map(rankedLines.map((line, index) => [line.id, index + 1])),
+    [rankedLines]
+  );
+
+  const openingFamilies = useMemo(() => {
+    const groups = new Map<string, OpeningLine[]>();
+
+    for (const line of rankedLines) {
+      const existing = groups.get(line.opening) ?? [];
+      existing.push(line);
+      groups.set(line.opening, existing);
+    }
+
+    return Array.from(groups.entries()).map(([opening, lines]) => ({
+      opening,
+      lines,
+      summary: getFamilySummary(lines, progressMap),
+    }));
+  }, [progressMap, rankedLines]);
+
+  const topRecommendation = rankedLines[0] ?? null;
+
+  const handleSaveGoal = () => {
+    savePlayerGoal(goalDraft.trim());
+    setGoalSaved(true);
+    window.setTimeout(() => setGoalSaved(false), 1800);
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-[28px] bg-gradient-to-br from-sky-700 via-cyan-700 to-emerald-600 p-6 text-white shadow-lg">
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100">
+          Happy Kick
+        </p>
+        <h1 className="mt-3 text-3xl font-bold leading-tight">Xin chào Kick</h1>
+        <p className="mt-2 max-w-xl text-sm leading-6 text-cyan-50">
+          Mỗi ngày học một chút, nhớ một nhánh cờ thật chắc, rồi từng bước biến khai cuộc
+          thành phản xạ tự nhiên.
+        </p>
+
+        {topRecommendation && (
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <Link
+              href={`/practice?lineId=${topRecommendation.id}`}
+              className="inline-flex items-center rounded-2xl bg-white px-5 py-2.5 text-sm font-semibold text-sky-800 shadow transition-colors hover:bg-sky-50"
+            >
+              Học bài được khuyến nghị →
+            </Link>
+            <span className="rounded-full border border-white/30 bg-white/15 px-3 py-1 text-xs font-medium text-white/90">
+              Gợi ý lúc này: {topRecommendation.name}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
+              Mục tiêu của Kick
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Ghi một mục tiêu ngắn để mỗi lần mở app bé nhớ mình đang cố gắng vì điều gì.
+            </p>
+          </div>
+          {goalSaved && (
+            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+              Đã lưu
+            </span>
+          )}
+        </div>
+
+        <textarea
+          value={goalDraft}
+          onChange={(e) => setGoalDraft(e.target.value)}
+          placeholder="Ví dụ: Con muốn nhớ thật chắc Italian chậm để vào trung cuộc tự tin hơn."
+          className="mt-4 min-h-28 w-full rounded-2xl border border-emerald-200 bg-emerald-50/40 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-emerald-400 focus:bg-white"
+        />
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-slate-500">
+            Mục tiêu ngắn, rõ ràng sẽ giúp bé có động l��c quay lại mỗi ngày.
+          </p>
+          <button
+            onClick={handleSaveGoal}
+            className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
+          >
+            Lưu mục tiêu
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+            Danh sách khai cuộc chính
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Mở từng nhóm khai cuộc để xem các nhánh con, tiến độ và chọn đúng bài bé muốn học.
+          </p>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3">
+          {openingFamilies.map((family) => {
+            const isExpanded = expandedFamilies[family.opening] ?? false;
+            return (
+            <div
+              key={family.opening}
+              className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/60"
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedFamilies((current) => ({
+                    ...current,
+                    [family.opening]: !isExpanded,
+                  }))
+                }
+                className="w-full cursor-pointer px-4 py-4 text-left"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">{family.opening}</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Đã học {family.summary.learned}/{family.summary.total} nhánh · Đã vững{" "}
+                      {family.summary.mastered} nhánh
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
+                    {isExpanded ? "Đóng danh sách" : "Mở danh sách"}
+                  </span>
+                </div>
+              </button>
+
+              {isExpanded && (
+              <div className="border-t border-slate-200 bg-white px-4 py-4">
+                <div className="flex flex-col gap-3">
+                  {family.lines.map((line) => {
+                    const progress = progressMap[line.id];
+                    const progressInfo = getLineProgress(progress);
+                    const isRecommended = Boolean(line.bookCoverage?.isBookAligned);
+                    return (
+                      <div
+                        key={line.id}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">
+                                #{rankingMap.get(line.id)}
+                              </span>
+                              <h4 className="text-sm font-semibold text-slate-900">{line.name}</h4>
+                              {isRecommended && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                                  Nên học
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Độ khó {line.difficulty}/4 · {line.moves.length} nước mẫu
+                            </p>
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${progressInfo.tone}`}>
+                            {progressInfo.label}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 flex items-center gap-3">
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className="h-full rounded-full bg-sky-500 transition-all"
+                              style={{ width: `${progressInfo.mastery}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium text-slate-500">
+                            {progressInfo.mastery}%
+                          </span>
+                        </div>
+
+                        <div className="mt-3 flex justify-end">
+                          <Link
+                            href={`/practice?lineId=${line.id}`}
+                            className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                              isRecommended
+                                ? "bg-sky-600 text-white hover:bg-sky-700"
+                                : "border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                            }`}
+                          >
+
+ succeeded in 0ms:
+"use client";
+
+import { useCallback, useEffect, useMemo, useState, startTransition } from "react";
+import dynamic from "next/dynamic";
+import { OpeningLine, UserProgress, UserStats, AttemptLog } from "@/types";
+import italianGameLines from "@/data/openings/italian_game";
+import { selectNextLine } from "@/lib/contentSelection";
+import {
+  loadProgressMap,
+  loadUserStats,
+  saveLineProgress,
+  saveUserStats,
+  saveAttempt,
+  loadDailySession,
+  saveDailySession,
+  addXP,
+  XP_CORRECT,
+  XP_MISTAKE,
+  XP_PERFECT,
+} from "@/lib/progressTracker";
+import { updateProgress } from "@/lib/spacedRepetition";
+import { buildLessonSegments, LessonSegment } from "@/lib/lessonFlow";
+import XPBar from "@/components/XPBar";
+import BranchExplorer from "@/components/BranchExplorer";
+import RichChessText from "@/components/RichChessText";
+
+// Dynamically import chess board to avoid SSR issues
+const ChessBoardPractice = dynamic(
+  () => import("@/components/ChessBoardPractice"),
+  { ssr: false, loading: () => <div className="w-full max-w-[420px] aspect-square bg-gray-200 rounded-2xl animate-pulse" /> }
+);
+
+interface PracticeMove {
+  ply: number;
+  userMove: string;
+  isCorrect: boolean;
+  segmentId?: string;
+  segmentTitle?: string;
+}
+
+export default function PracticePage() {
+  const [currentLine, setCurrentLine] = useState<OpeningLine | null>(null);
+  const [progressMap, setProgressMap] = useState<Record<string, UserProgress>>({});
+  const [stats, setStats] = useState<UserStats>({ totalXP: 0, level: 0, dailyStreak: 0 });
+  const [isNew, setIsNew] = useState(false);
+  const [lineKey, setLineKey] = useState(0); // force remount on new line / mode change
+  const [xpEarned, setXpEarned] = useState<number | null>(null);
+  const [segmentIndex, setSegmentIndex] = useState(0);
+  const [lessonMoves, setLessonMoves] = useState<PracticeMove[]>([]);
+  const [lessonHadMistake, setLessonHadMistake] = useState(false);
+  const [adHocSegment, setAdHocSegment] = useState<LessonSegment | null>(null);
+  const [currentBranchMoveKey, setCurrentBranchMoveKey] = useState<string | null>(null);
+  const [branchPreviewMove, setBranchPreviewMove] = useState<{ from: string; to: string; san: string } | null>(null);
+  const [branchForkPreviews, setBranchForkPreviews] = useState<Array<{ from: string; to: string; label: string }>>([]);
+
+  const lessonSegments = useMemo(
+    () => (currentLine ? buildLessonSegments(currentLine) : []),
+    [currentLine]
+  );
+  const currentSegment = lessonSegments[segmentIndex] ?? null;
+  const activeSegment = adHocSegment ?? currentSegment;
+  const isFinalSegment = lessonSegments.length > 0 && segmentIndex === lessonSegments.length - 1;
+  const isVariationPracticeSegment =
+    activeSegment?.mode === "practice" &&
+    (activeSegment.segmentType === "variation" || activeSegment.segmentType === "group_review");
+  const nextPracticeSegmentTitle = useMemo(() => {
+    if (adHocSegment || !currentSegment) return null;
+
+    const nextSegment = lessonSegments.slice(segmentIndex + 1).find((segment) => {
+      return (
+        segment.mode === "practice" &&
+        (segment.segmentType === "variation" || segment.segmentType === "group_review")
+      );
+    });
+
+    return nextSegment?.title ?? null;
+  }, [adHocSegment, currentSegment, lessonSegments, segmentIndex]);
+
+  const handleBoardProgressChange = useCallback(
+    ({
+      currentMoveKey,
+      phase,
+    }: {
+      currentMoveKey: string | null;
+      fen: string;
+      phase: "playing" | "opponent" | "completed";
+    }) => {
+      setCurrentBranchMoveKey((previous) => (previous === currentMoveKey ? previous : currentMoveKey));
+      setBranchPreviewMove((previous) => (previous === null ? previous : null));
+      if (phase !== "playing") {
+        setBranchForkPreviews((previous) => (previous.length === 0 ? previous : []));
+      }
+    },
+    []
+  );
+
+  const handleBranchPreviewChange = useCallback(
+    ({
+      move,
+      forks,
+    }: {
+      move: { from: string; to: string; san: string } | null;
+      forks: Array<{ from: string; to: string; label: string }>;
+    }) => {
+      setBranchPreviewMove((previous) => {
+        const nextMove = move ? { from: move.from, to: move.to, san: move.san } : null;
+        if (
+          previous?.from === nextMove?.from &&
+          previous?.to === nextMove?.to &&
+          previous?.san === nextMove?.san
+        ) {
+          return previous;
+        }
+        return nextMove;
+      });
+
+      setBranchForkPreviews((previous) => {
+        if (
+          previous.length === forks.length &&
+          previous.every(
+            (fork, index) =>
+              fork.from === forks[index]?.from &&
+              fork.to === forks[index]?.to &&
+              fork.label === forks[index]?.label
+          )
+        ) {
+          return previous;
+        }
+
+        return forks;
+      });
+    },
+    []
+  );
+
+  const resetLessonState = useCallback(() => {
+    setSegmentIndex(0);
+    setLineKey((k) => k + 1);
+    setLessonMoves([]);
+    setLessonHadMistake(false);
+    setXpEarned(null);
+    setAdHocSegment(null);
+    setCurrentBranchMoveKey(null);
+    setBranchPreviewMove(null);
+    setBranchForkPreviews([]);
+  }, []);
+
+  // Load data on mount
+  useEffect(() => {
+    startTransition(() => {
+      const map = loadProgressMap();
+      const s = loadUserStats();
+      setProgressMap(map);
+      setStats(s);
+      const now = Math.floor(Date.now() / 1000);
+      const requestedLineId =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("lineId")
+          : null;
+      if (requestedLineId) {
+        const requestedLine = italianGameLines.find((line) => line.id === requestedLineId) ?? null;
+        if (requestedLine) {
+          setCurrentLine(requestedLine);
+          setIsNew(!map[requestedLine.id]);
+          setSegmentIndex(0);
+          return;
+        }
+      }
+      const next = selectNextLine(italianGameLines, map, now);
+      if (next) {
+        setCurrentLine(next.line);
+        setIsNew(next.isNew);
+        setSegmentIndex(0);
+      }
+    });
+  }, []);
+
+  const handleTutorialComplete = useCallback(() => {
+    setAdHocSegment(null);
+    setSegmentIndex((index) => index + 1);
+    setLineKey((k) => k + 1);
+  }, []);
+
+  const persistLessonResult = useCallback(
+    (moves: PracticeMove[], hadMistakes: boolean, perfect: boolean) => {
+      if (!currentLine) return;
+
+      const now = Math.floor(Date.now() / 1000);
+      const existingProgress = progressMap[currentLine.id] ?? null;
+
+      const newProgress = updateProgress(
+        existingProgress,
+        currentLine.id,
+        "guest",
+        !hadMistakes,
+        now
+      );
+      saveLineProgress(newProgress);
+      const newMap = { ...progressMap, [currentLine.id]: newProgress };
+      setProgressMap(newMap);
+
+      const xp = perfect ? XP_PERFECT : hadMistakes ? XP_MISTAKE : XP_CORRECT;
+      setXpEarned(xp);
+      const newStats = addXP(stats, perfect, hadMistakes);
+      saveUserStats(newStats);
+      setStats(newStats);
+
+      const attempt: AttemptLog = {
+        userId: "guest",
+        lineId: currentLine.id,
+        timestamp: now,
+        moves: moves.map((m) => ({
+          ply: m.ply,
+          userMove: m.userMove,
+          isCorrect: m.isCorrect,
+          segmentId: m.segmentId,
+          segmentTitle: m.segmentTitle,
+        })),
+      };
+      saveAttempt(attempt);
+
+      const session = loadDailySession("guest");
+      const itemType = currentLine.trap ? "trap" : isNew ? "new" : "review";
+      session.items.push({ lineId: currentLine.id, type: itemType });
+      saveDailySession(session);
+    },
+    [currentLine, isNew, progressMap, stats]
+  );
+
+  // ─── Practice completed ───────────────────────────────────────────────────────
+  const handleComplete = useCallback(
+    (moves: PracticeMove[], perfect: boolean) => {
+      if (adHocSegment) {
+        return;
+      }
+
+      const hasMistakes = moves.some((m) => !m.isCorrect);
+      const annotatedMoves = moves.map((move) => ({
+        ...move,
+        segmentId: currentSegment?.id,
+        segmentTitle: currentSegment?.title,
+      }));
+      const allMoves = [...lessonMoves, ...annotatedMoves];
+      const overallHadMistake = lessonHadMistake || hasMistakes;
+
+      setLessonMoves(allMoves);
+      setLessonHadMistake(overallHadMistake);
+
+      if (isFinalSegment) {
+        persistLessonResult(allMoves, overallHadMistake, perfect && !overallHadMistake);
+      }
+    },
+    [
+      adHocSegment,
+      currentSegment?.id,
+      currentSegment?.title,
+      isFinalSegment,
+      lessonHadMistake,
+      lessonMoves,
+      persistLessonResult,
+
+ succeeded in 0ms:
+src/app/api/attempt/route.ts:10: * POST /api/attempt
+src/app/api/progress/route.ts:6: * GET /api/progress
+src/app/api/lesson/next/route.ts:7: * GET /api/lesson/next
+
+exec
+/bin/zsh -lc "rg -n \"\\/api\\/|fetch\\(\" src" in /Users/haile/Documents/github/ChessLearning
+codex
+Phần app chính đang chạy gần như hoàn toàn ở client-side và không hề dùng các API route đó, nên hướng đúng là chuyển sang `next export` cho GitHub Pages. Tôi sẽ thêm cấu hình export tĩnh, workflow deploy, rồi chạy build local để bắt lỗi thực tế thay vì đoán.
+exec
+/bin/zsh -lc "sed -n '1,220p' src/app/layout.tsx" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+import type { Metadata } from "next";
+import "./globals.css";
+import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "ChessLearning – Học Khai Cuộc",
+  description: "Luyện tập khai cuộc cờ vua thông minh với spaced repetition",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="vi">
+      <body className="min-h-screen bg-gray-50 text-gray-900 font-sans antialiased">
+        {/* Navigation */}
+        <nav className="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
+          <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
+            <Link href="/" className="flex items-center gap-2 font-bold text-lg text-gray-900">
+              ♟ ChessLearning
+            </Link>
+            <div className="flex gap-4 text-sm font-medium">
+              <Link
+                href="/practice"
+                className="text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                Luyện tập
+              </Link>
+              <Link
+                href="/progress"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                Tiến độ
+              </Link>
+            </div>
+          </div>
+        </nav>
+
+        {/* Page content */}
+        <main className="max-w-lg mx-auto px-4 py-6">{children}</main>
+      </body>
+    </html>
+  );
+}
+
+exec
+/bin/zsh -lc 'npm run build' in /Users/haile/Documents/github/ChessLearning
+codex
+Tôi đang chạy build thật để xem Next có vướng SSR/API/static export ở đâu. Nếu build lỗi, tôi sẽ sửa đúng chỗ thay vì thêm config mù.
+ succeeded in 4742ms:
+
+> chess-learning@0.1.0 build
+> next build
+
+▲ Next.js 16.2.1 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 1609ms
+  Running TypeScript ...
+  Finished TypeScript in 1579ms ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/9) ...
+  Generating static pages using 7 workers (2/9) 
+  Generating static pages using 7 workers (4/9) 
+  Generating static pages using 7 workers (6/9) 
+✓ Generating static pages using 7 workers (9/9) in 132ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/attempt
+├ ƒ /api/lesson/next
+├ ƒ /api/progress
+├ ○ /practice
+└ ○ /progress
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+
+codex
+Tôi sẽ sửa theo hướng deploy ổn định trên GitHub Pages: bật `output: "export"`, xử lý `basePath` theo tên repo trong CI, và bỏ các API route không dùng vì GitHub Pages không có backend. Sau đó tôi sẽ thêm workflow GitHub Actions để tự deploy khi `push`.
+apply patch
+patch: completed
+/Users/haile/Documents/github/ChessLearning/.github/workflows/deploy.yml
+/Users/haile/Documents/github/ChessLearning/next.config.ts
+/Users/haile/Documents/github/ChessLearning/src/app/api/attempt/route.ts
+/Users/haile/Documents/github/ChessLearning/src/app/api/lesson/next/route.ts
+/Users/haile/Documents/github/ChessLearning/src/app/api/progress/route.ts
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+codex
+Cấu hình deploy đã được thêm. Tôi đang build lại ở chế độ static export để xác nhận repo này thật sự sinh ra thư mục `out/` dùng cho GitHub Pages.
+exec
+/bin/zsh -lc 'git status --short' in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+A  .discord-runtime/logs/codex-1775831553063.log
+A  .discord-runtime/tasks/task-1775831553059.md
+A  .discord-runtime/tasks/task-1775831553059.reply.txt
+A  .env.discord.local
+A  docs/discord-mobile-control.md
+ M next.config.ts
+M  package-lock.json
+M  package.json
+A  scripts/discord-codex-bot.mjs
+ D src/app/api/attempt/route.ts
+ D src/app/api/lesson/next/route.ts
+ D src/app/api/progress/route.ts
+?? .discord-runtime/logs/codex-1775832825800.log
+?? .discord-runtime/tasks/task-1775832825796.md
+?? .github/
+
+exec
+/bin/zsh -lc 'npm run build' in /Users/haile/Documents/github/ChessLearning
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+ succeeded in 4476ms:
+▲ Next.js 16.2.1 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 1556ms
+  Running TypeScript ...
+  Finished TypeScript in 1599ms ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/6) ...
+  Generating static pages using 7 workers (1/6) 
+  Generating static pages using 7 workers (2/6) 
+  Generating static pages using 7 workers (4/6) 
+✓ Generating static pages using 7 workers (6/6) in 250ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /practice
+└ ○ /progress
+
+
+○  (Static)  prerendered as static content
+
+
+codex
+Build static đã pass. Tôi kiểm tra thêm tên branch hiện tại để tránh workflow nghe `main` nhưng repo của bạn lại dùng branch khác.
+exec
+/bin/zsh -lc "sed -n '1,220p' .github/workflows/deploy.yml" in /Users/haile/Documents/github/ChessLearning
+exec
+/bin/zsh -lc "sed -n '1,220p' next.config.ts" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static site
+        run: npm run build
+
+      - name: Disable Jekyll
+        run: touch out/.nojekyll
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./out
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+ succeeded in 0ms:
+import type { NextConfig } from "next";
+
+const isGithubActions = process.env.GITHUB_ACTIONS === "true";
+const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
+const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
+
+const nextConfig: NextConfig = {
+  output: "export",
+  trailingSlash: true,
+  images: {
+    unoptimized: true,
+  },
+  basePath,
+  assetPrefix: basePath,
+};
+
+export default nextConfig;
+
+exec
+/bin/zsh -lc 'git branch --show-current' in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+main
+
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+codex
+Phần cấu hình đã khớp với branch `main`. Tôi sẽ chốt lại các bước bạn cần làm trên GitHub sau khi push, vì workflow đã sẵn nhưng GitHub Pages còn một bước bật trong repo settings nếu repo chưa từng dùng Pages.
+exec
+/bin/zsh -lc "nl -ba next.config.ts | sed -n '1,220p'" in /Users/haile/Documents/github/ChessLearning
+exec
+/bin/zsh -lc "nl -ba .github/workflows/deploy.yml | sed -n '1,260p'" in /Users/haile/Documents/github/ChessLearning
+ succeeded in 0ms:
+     1	name: Deploy to GitHub Pages
+     2	
+     3	on:
+     4	  push:
+     5	    branches:
+     6	      - main
+     7	  workflow_dispatch:
+     8	
+     9	permissions:
+    10	  contents: read
+    11	  pages: write
+    12	  id-token: write
+    13	
+    14	concurrency:
+    15	  group: pages
+    16	  cancel-in-progress: true
+    17	
+    18	jobs:
+    19	  build:
+    20	    runs-on: ubuntu-latest
+    21	
+    22	    steps:
+    23	      - name: Checkout
+    24	        uses: actions/checkout@v4
+    25	
+    26	      - name: Setup Node.js
+    27	        uses: actions/setup-node@v4
+    28	        with:
+    29	          node-version: 22
+    30	          cache: npm
+    31	
+    32	      - name: Configure Pages
+    33	        uses: actions/configure-pages@v5
+    34	
+    35	      - name: Install dependencies
+    36	        run: npm ci
+    37	
+    38	      - name: Build static site
+    39	        run: npm run build
+    40	
+    41	      - name: Disable Jekyll
+    42	        run: touch out/.nojekyll
+    43	
+    44	      - name: Upload artifact
+    45	        uses: actions/upload-pages-artifact@v3
+    46	        with:
+    47	          path: ./out
+    48	
+    49	  deploy:
+    50	    environment:
+    51	      name: github-pages
+    52	      url: ${{ steps.deployment.outputs.page_url }}
+    53	    runs-on: ubuntu-latest
+    54	    needs: build
+    55	
+    56	    steps:
+    57	      - name: Deploy to GitHub Pages
+    58	        id: deployment
+    59	        uses: actions/deploy-pages@v4
+
+ succeeded in 0ms:
+     1	import type { NextConfig } from "next";
+     2	
+     3	const isGithubActions = process.env.GITHUB_ACTIONS === "true";
+     4	const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
+     5	const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
+     6	
+     7	const nextConfig: NextConfig = {
+     8	  output: "export",
+     9	  trailingSlash: true,
+    10	  images: {
+    11	    unoptimized: true,
+    12	  },
+    13	  basePath,
+    14	  assetPrefix: basePath,
+    15	};
+    16	
+    17	export default nextConfig;
+
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+codex
+Tôi đã setup để repo này deploy tự động lên GitHub Pages mỗi khi bạn `push` lên `main`.
+
+Các thay đổi chính:
+- Bật static export cho Next.js trong [next.config.ts](/Users/haile/Documents/github/ChessLearning/next.config.ts#L3) để build ra `out/`, đồng thời tự xử lý `basePath` theo tên repo khi chạy trên GitHub Actions.
+- Thêm workflow auto deploy tại [.github/workflows/deploy.yml](/Users/haile/Documents/github/ChessLearning/.github/workflows/deploy.yml#L1). Workflow này sẽ:
+  1. `npm ci`
+  2. `npm run build`
+  3. upload thư mục `out/`
+  4. deploy lên GitHub Pages
+- Gỡ các API route trong `src/app/api/*` vì GitHub Pages không có backend; app hiện tại đang chạy được hoàn toàn kiểu static/client-side nên không cần chúng.
+
+Tôi đã build local và xác nhận pass ở chế độ static export.
+
+Việc bạn cần làm bây giờ:
+1. Commit và push các file thay đổi lên GitHub.
+2. Vào `Settings > Pages` của repo.
+3. Ở mục `Build and deployment`, chọn `Source: GitHub Actions` nếu repo chưa tự bật.
+4. Push lên `main` là site sẽ tự deploy.
+
+Sau khi deploy xong, URL thường sẽ là:
+`https://<github-username>.github.io/ChessLearning/`
+
+Nếu muốn, tôi có thể làm tiếp cho bạn:
+- thêm hướng dẫn ngắn vào `README.md`
+- kiểm tra lại toàn bộ UI/path để chắc 100% chạy đúng trên GitHub Pages sau khi lên remote.
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..161c22657549287e0c08f35e790ac6c5c4de689f
+--- /dev/null
++++ b/.github/workflows/deploy.yml
+@@ -0,0 +1,59 @@
++name: Deploy to GitHub Pages
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: pages
++  cancel-in-progress: true
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Setup Node.js
++        uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++
++      - name: Configure Pages
++        uses: actions/configure-pages@v5
++
++      - name: Install dependencies
++        run: npm ci
++
++      - name: Build static site
++        run: npm run build
++
++      - name: Disable Jekyll
++        run: touch out/.nojekyll
++
++      - name: Upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: ./out
++
++  deploy:
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    runs-on: ubuntu-latest
++    needs: build
++
++    steps:
++      - name: Deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+diff --git a/next.config.ts b/next.config.ts
+index e9ffa3083ad279ecf95fd8eae59cb253e9a539c4..2101c1b6cc6c594e20f5a9af5ca528ed47231bba
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,7 +1,17 @@
+ import type { NextConfig } from "next";
+ 
++const isGithubActions = process.env.GITHUB_ACTIONS === "true";
++const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
++const basePath = isGithubActions && repositoryName ? `/${repositoryName}` : "";
++
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  output: "export",
++  trailingSlash: true,
++  images: {
++    unoptimized: true,
++  },
++  basePath,
++  assetPrefix: basePath,
+ };
+ 
+ export default nextConfig;
+diff --git a/src/app/api/attempt/route.ts b/src/app/api/attempt/route.ts
+deleted file mode 100644
+index 66fc90ad83114b024a4de1da22b40909bf18dc25..0000000000000000000000000000000000000000
+--- a/src/app/api/attempt/route.ts
++++ /dev/null
+@@ -1,60 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { AttemptLog, UserProgress } from "@/types";
+-import { updateProgress } from "@/lib/spacedRepetition";
+-
+-const XP_CORRECT = 10;
+-const XP_MISTAKE = 2;
+-const XP_PERFECT = 20;
+-
+-/**
+- * POST /api/attempt
+- * Body: { lineId, userId, moves, existingProgress? }
+- * Returns: { progress, xpEarned }
+- */
+-export async function POST(req: NextRequest) {
+-  let body: {
+-    lineId: string;
+-    userId?: string;
+-    moves: AttemptLog["moves"];
+-    existingProgress?: UserProgress | null;
+-  };
+-
+-  try {
+-    body = await req.json();
+-  } catch {
+-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+-  }
+-
+-  const { lineId, userId = "guest", moves, existingProgress = null } = body;
+-
+-  if (!lineId || !Array.isArray(moves)) {
+-    return NextResponse.json(
+-      { error: "lineId and moves are required" },
+-      { status: 400 }
+-    );
+-  }
+-
+-  const hasMistakes = moves.some((m) => !m.isCorrect);
+-  const wasCorrect = !hasMistakes;
+-  const wasPerfect = wasCorrect && moves.length > 0;
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const progress = updateProgress(
+-    existingProgress,
+-    lineId,
+-    userId,
+-    wasCorrect,
+-    now
+-  );
+-
+-  const xpEarned = wasPerfect ? XP_PERFECT : hasMistakes ? XP_MISTAKE : XP_CORRECT;
+-
+-  const attempt: AttemptLog = {
+-    userId,
+-    lineId,
+-    timestamp: now,
+-    moves,
+-  };
+-
+-  return NextResponse.json({ progress, xpEarned, attempt });
+-}
+diff --git a/src/app/api/lesson/next/route.ts b/src/app/api/lesson/next/route.ts
+deleted file mode 100644
+index 3da8f63f1994608fe43aa11f4cbd4eeaa4811387..0000000000000000000000000000000000000000
+--- a/src/app/api/lesson/next/route.ts
++++ /dev/null
+@@ -1,32 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { selectNextLine } from "@/lib/contentSelection";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/lesson/next
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore malformed progress
+-    }
+-  }
+-
+-  const now = Math.floor(Date.now() / 1000);
+-  const next = selectNextLine(italianGameLines, progressMap, now);
+-
+-  if (!next) {
+-    return NextResponse.json({ line: null }, { status: 200 });
+-  }
+-
+-  return NextResponse.json({ line: next.line, isNew: next.isNew });
+-}
+diff --git a/src/app/api/progress/route.ts b/src/app/api/progress/route.ts
+deleted file mode 100644
+index ad7d7092d111da1ac121ed66d2eac0194732bd6f..0000000000000000000000000000000000000000
+--- a/src/app/api/progress/route.ts
++++ /dev/null
+@@ -1,44 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import italianGameLines from "@/data/openings/italian_game";
+-import { UserProgress } from "@/types";
+-
+-/**
+- * GET /api/progress
+- * Query params:
+- *   - progress: JSON-encoded Record<string, UserProgress>
+- * Returns summary stats.
+- */
+-export async function GET(req: NextRequest) {
+-  const url = new URL(req.url);
+-  const progressParam = url.searchParams.get("progress");
+-
+-  let progressMap: Record<string, UserProgress> = {};
+-  if (progressParam) {
+-    try {
+-      progressMap = JSON.parse(progressParam);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-
+-  const totalLines = italianGameLines.length;
+-  const seenLines = Object.keys(progressMap).length;
+-  const masteredLines = Object.values(progressMap).filter(
+-    (p) => p.successRate >= 0.8 && p.correctStreak >= 3
+-  ).length;
+-
+-  const lines = italianGameLines.map((line) => ({
+-    id: line.id,
+-    name: line.name,
+-    trap: line.trap,
+-    difficulty: line.difficulty,
+-    progress: progressMap[line.id] ?? null,
+-  }));
+-
+-  return NextResponse.json({
+-    totalLines,
+-    seenLines,
+-    masteredLines,
+-    lines,
+-  });
+-}
+
+tokens used
+17,082
+Tôi đã setup để repo này deploy tự động lên GitHub Pages mỗi khi bạn `push` lên `main`.
+
+Các thay đổi chính:
+- Bật static export cho Next.js trong [next.config.ts](/Users/haile/Documents/github/ChessLearning/next.config.ts#L3) để build ra `out/`, đồng thời tự xử lý `basePath` theo tên repo khi chạy trên GitHub Actions.
+- Thêm workflow auto deploy tại [.github/workflows/deploy.yml](/Users/haile/Documents/github/ChessLearning/.github/workflows/deploy.yml#L1). Workflow này sẽ:
+  1. `npm ci`
+  2. `npm run build`
+  3. upload thư mục `out/`
+  4. deploy lên GitHub Pages
+- Gỡ các API route trong `src/app/api/*` vì GitHub Pages không có backend; app hiện tại đang chạy được hoàn toàn kiểu static/client-side nên không cần chúng.
+
+Tôi đã build local và xác nhận pass ở chế độ static export.
+
+Việc bạn cần làm bây giờ:
+1. Commit và push các file thay đổi lên GitHub.
+2. Vào `Settings > Pages` của repo.
+3. Ở mục `Build and deployment`, chọn `Source: GitHub Actions` nếu repo chưa tự bật.
+4. Push lên `main` là site sẽ tự deploy.
+
+Sau khi deploy xong, URL thường sẽ là:
+`https://<github-username>.github.io/ChessLearning/`
+
+Nếu muốn, tôi có thể làm tiếp cho bạn:
+- thêm hướng dẫn ngắn vào `README.md`
+- kiểm tra lại toàn bộ UI/path để chắc 100% chạy đúng trên GitHub Pages sau khi lên remote.
+
+[process exited] code=0 signal=null

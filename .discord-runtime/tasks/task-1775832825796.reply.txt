@@ -1,0 +1,25 @@
+Tôi đã setup để repo này deploy tự động lên GitHub Pages mỗi khi bạn `push` lên `main`.
+
+Các thay đổi chính:
+- Bật static export cho Next.js trong [next.config.ts](/Users/haile/Documents/github/ChessLearning/next.config.ts#L3) để build ra `out/`, đồng thời tự xử lý `basePath` theo tên repo khi chạy trên GitHub Actions.
+- Thêm workflow auto deploy tại [.github/workflows/deploy.yml](/Users/haile/Documents/github/ChessLearning/.github/workflows/deploy.yml#L1). Workflow này sẽ:
+  1. `npm ci`
+  2. `npm run build`
+  3. upload thư mục `out/`
+  4. deploy lên GitHub Pages
+- Gỡ các API route trong `src/app/api/*` vì GitHub Pages không có backend; app hiện tại đang chạy được hoàn toàn kiểu static/client-side nên không cần chúng.
+
+Tôi đã build local và xác nhận pass ở chế độ static export.
+
+Việc bạn cần làm bây giờ:
+1. Commit và push các file thay đổi lên GitHub.
+2. Vào `Settings > Pages` của repo.
+3. Ở mục `Build and deployment`, chọn `Source: GitHub Actions` nếu repo chưa tự bật.
+4. Push lên `main` là site sẽ tự deploy.
+
+Sau khi deploy xong, URL thường sẽ là:
+`https://<github-username>.github.io/ChessLearning/`
+
+Nếu muốn, tôi có thể làm tiếp cho bạn:
+- thêm hướng dẫn ngắn vào `README.md`
+- kiểm tra lại toàn bộ UI/path để chắc 100% chạy đúng trên GitHub Pages sau khi lên remote.

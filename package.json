@@ -7,12 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "discord:bot": "node scripts/discord-codex-bot.mjs",
     "validate:italian-book": "node scripts/validate-italian-book.mjs",
     "pdf:read": "node scripts/read-pdf.mjs",
     "compare:italian-book": "node scripts/compare-italian-book-to-pdf.mjs"
   },
   "dependencies": {
     "chess.js": "^1.4.0",
+    "discord.js": "^14.25.1",
     "next": "16.2.1",
     "react": "19.2.4",
     "react-chessboard": "^5.10.0",
